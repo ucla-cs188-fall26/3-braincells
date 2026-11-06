@@ -20,6 +20,7 @@ Students who vibe code want to be authors of their projects, but AI coding tools
 
 - [React 19](https://react.dev)
 - [TypeScript](https://www.typescriptlang.org)
+- [Tailwind CSS](https://tailwindcss.com)
 - [Vite](https://vite.dev)
 - [ESLint](https://eslint.org)
 
