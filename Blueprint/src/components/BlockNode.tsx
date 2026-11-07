@@ -1,5 +1,13 @@
-import { useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
-import { Handle, Position, useReactFlow, type Node, type NodeProps } from '@xyflow/react'
+import { useEffect, useState, type FocusEvent, type KeyboardEvent } from 'react'
+import {
+  Handle,
+  Position,
+  useReactFlow,
+  useUpdateNodeInternals,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react'
+import BlockToolbar from './BlockToolbar'
 
 export type BlockNodeData = {
   title: string
@@ -18,8 +26,11 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
   const { updateNodeData, deleteElements } = useReactFlow()
   const [title, setTitle] = useState(data.title)
   const [description, setDescription] = useState(data.description)
+  const updateNodeInternals = useUpdateNodeInternals()
 
-  const pointerDown = useRef({ x: 0, y: 0 })
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [id, data.editing, updateNodeInternals])
 
   const startEditing = () => {
     setTitle(data.title)
@@ -38,16 +49,6 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
     updateNodeData(id, { title: title.trim(), description: description.trim(), editing: false })
   }
 
-  const handlePointerDown = (event: PointerEvent) => {
-    pointerDown.current = { x: event.clientX, y: event.clientY }
-  }
-
-  // Only a real click starts editing, not the end of a drag.
-  const handleClick = (event: MouseEvent) => {
-    const { x, y } = pointerDown.current
-    if (Math.hypot(event.clientX - x, event.clientY - y) < 4) startEditing()
-  }
-
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.nativeEvent.isComposing) return
     if (event.key === 'Enter') save()
@@ -63,6 +64,12 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
 
   return (
     <div className="group relative w-48">
+      <BlockToolbar
+        isVisible={selected && !data.editing}
+        onEdit={startEditing}
+        onDelete={() => deleteElements({ nodes: [{ id }] })}
+      />
+
       {data.editing ? (
         <>
           <div
@@ -90,11 +97,7 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
         </>
       ) : (
         <>
-          <div
-            onPointerDown={handlePointerDown}
-            onClick={handleClick}
-            className={`${BOX_STYLE} cursor-text ${selected ? HALO_STYLE : ''}`}
-          >
+          <div className={`${BOX_STYLE} ${selected ? HALO_STYLE : ''}`}>
             <p className="text-sm font-bold">{data.title}</p>
             {data.description && <p className="text-xs text-gray-500">{data.description}</p>}
           </div>
