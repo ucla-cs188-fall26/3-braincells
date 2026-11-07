@@ -15,7 +15,7 @@ export default function HomePage() {
 
       <div className="relative flex w-full max-w-180 flex-col items-center gap-10">
         <Logo />
-        <h1 className="text-[clamp(36px,5.5vw,56px)] leading-[1.08] font-bold tracking-[-0.025em]">
+        <h1 className="text-[clamp(36px,5.5vw,56px)] leading-[1.08] font-bold tracking-tight">
           Draw it before
           <br />
           you prompt it.
