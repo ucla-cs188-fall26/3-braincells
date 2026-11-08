@@ -1,4 +1,4 @@
-import { useMemo, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   ConnectionMode,
   MarkerType,
@@ -9,8 +9,10 @@ import {
   useNodesState,
   useReactFlow,
   type Connection,
+  type Viewport,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { DEFAULT_PLAN_ID, loadPlan, savePlan } from '../lib/planStorage'
 import BlockNode, { type BlockNodeType } from './BlockNode'
 import CanvasEmptyState from './CanvasEmptyState'
 import LabeledEdge, { type LabeledEdgeType } from './LabeledEdge'
@@ -26,10 +28,30 @@ const defaultEdgeOptions = {
   style: { strokeWidth: 2, stroke: EDGE_COLOR },
 }
 
-function Canvas() {
-  const [nodes, setNodes, onNodesChange] = useNodesState<BlockNodeType>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<LabeledEdgeType>([])
+const SAVE_DELAY_MS = 400
+
+function Canvas({ planId }: { planId: string }) {
+  // Read storage once, on first render.
+  const [saved] = useState(() => loadPlan(planId))
+  const [nodes, setNodes, onNodesChange] = useNodesState<BlockNodeType>(saved?.nodes ?? [])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<LabeledEdgeType>(saved?.edges ?? [])
   const { screenToFlowPosition } = useReactFlow()
+  const viewportRef = useRef<Viewport>(saved?.viewport ?? { x: 0, y: 0, zoom: 1 })
+
+  // Autosave shortly after the last change, so a drag doesn't write on every pixel.
+  const save = useCallback(
+    () => savePlan(planId, { nodes, edges, viewport: viewportRef.current }),
+    [planId, nodes, edges],
+  )
+  useEffect(() => {
+    const timer = setTimeout(save, SAVE_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [save])
+
+  const handleMoveEnd = (_event: unknown, viewport: Viewport) => {
+    viewportRef.current = viewport
+    save()
+  }
 
   // Selected edges turn blue; every other edge gets the grey look back explicitly.
   const displayedEdges = useMemo(
@@ -85,6 +107,8 @@ function Canvas() {
         onEdgesChange={onEdgesChange}
         onConnect={connect}
         onPaneClick={addNodeAtCursor}
+        defaultViewport={saved?.viewport}
+        onMoveEnd={handleMoveEnd}
       />
 
       {nodes.length === 0 && (
@@ -96,10 +120,10 @@ function Canvas() {
   )
 }
 
-export default function BlueprintCanvas() {
+export default function BlueprintCanvas({ planId = DEFAULT_PLAN_ID }: { planId?: string }) {
   return (
     <ReactFlowProvider>
-      <Canvas />
+      <Canvas planId={planId} />
     </ReactFlowProvider>
   )
 }
