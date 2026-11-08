@@ -7,6 +7,8 @@ import {
   type Edge,
   type EdgeProps,
 } from '@xyflow/react'
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
+import ToolbarPill from './ToolbarPill'
 
 export type LabeledEdgeData = {
   label: string
@@ -68,8 +70,9 @@ export default function LabeledEdge({
   targetPosition,
   markerEnd,
   style,
+  selected,
 }: EdgeProps<LabeledEdgeType>) {
-  const { updateEdgeData } = useReactFlow()
+  const { updateEdgeData, deleteElements } = useReactFlow()
   const label = data?.label ?? ''
   const editing = data?.editing ?? false
 
@@ -86,11 +89,36 @@ export default function LabeledEdge({
   const isHorizontal = Math.abs(targetX - sourceX) >= Math.abs(targetY - sourceY)
   const placement = isHorizontal ? '-translate-x-1/2 -translate-y-full -mt-3' : '-translate-y-1/2 ml-3'
 
+  const showToolbar = selected && !editing
+  const toolbar = (
+    <ToolbarPill
+      size="sm"
+      actions={[
+        { label: 'Edit', Icon: PencilIcon, onClick: () => updateEdgeData(id, { editing: true }) },
+        {
+          label: 'Delete',
+          Icon: TrashIcon,
+          onClick: () => deleteElements({ edges: [{ id }] }),
+          danger: true,
+        },
+      ]}
+    />
+  )
+
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={20} />
 
       <EdgeLabelRenderer>
+        {/* Without a label there is nothing to line up with, so the toolbar sits over the line. */}
+        {showToolbar && !label && (
+          <div
+            className="nodrag nopan pointer-events-auto absolute"
+            style={{ transform: `translate(${labelX}px, ${labelY}px) translate(-50%, -100%)` }}
+          >
+            <div className="mb-3">{toolbar}</div>
+          </div>
+        )}
         <div
           className={`nodrag nopan pointer-events-auto absolute ${placement}`}
           style={{ transform: `translate(${labelX}px, ${labelY}px)` }}
@@ -99,13 +127,21 @@ export default function LabeledEdge({
             <EdgeLabelInput edgeId={id} initialLabel={label} />
           ) : (
             label && (
-              <button
-                type="button"
-                onClick={() => updateEdgeData(id, { editing: true })}
-                className={`${BOX_STYLE} cursor-text border-transparent`}
-              >
-                {label}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => updateEdgeData(id, { editing: true })}
+                  className={`${BOX_STYLE} cursor-text border-transparent`}
+                >
+                  {label}
+                </button>
+                {/* Centered on the label, just above it */}
+                {showToolbar && (
+                  <div className="absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2">
+                    {toolbar}
+                  </div>
+                )}
+              </>
             )
           )}
         </div>

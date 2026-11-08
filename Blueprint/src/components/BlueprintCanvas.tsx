@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react'
+import { useMemo, type MouseEvent } from 'react'
 import {
   ConnectionMode,
   MarkerType,
@@ -9,7 +9,6 @@ import {
   useNodesState,
   useReactFlow,
   type Connection,
-  type Edge,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import BlockNode, { type BlockNodeType } from './BlockNode'
@@ -19,7 +18,8 @@ import LabeledEdge, { type LabeledEdgeType } from './LabeledEdge'
 const nodeTypes = { block: BlockNode }
 const edgeTypes = { labeled: LabeledEdge }
 
-const EDGE_COLOR = '#6b7280'
+const EDGE_COLOR = 'var(--color-edge)'
+const SELECTED_EDGE_COLOR = 'var(--color-brand)'
 const defaultEdgeOptions = {
   type: 'labeled',
   markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLOR },
@@ -29,7 +29,21 @@ const defaultEdgeOptions = {
 function Canvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState<BlockNodeType>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<LabeledEdgeType>([])
-  const { screenToFlowPosition, updateEdgeData } = useReactFlow()
+  const { screenToFlowPosition } = useReactFlow()
+
+  // Selected edges turn blue; every other edge gets the grey look back explicitly.
+  const displayedEdges = useMemo(
+    () =>
+      edges.map((edge) => {
+        const color = edge.selected ? SELECTED_EDGE_COLOR : EDGE_COLOR
+        return {
+          ...edge,
+          markerEnd: { type: MarkerType.ArrowClosed, color },
+          style: { strokeWidth: 2, stroke: color },
+        }
+      }),
+    [edges],
+  )
 
   const addNodeAtCursor = (event: MouseEvent) => {
     const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
@@ -58,13 +72,11 @@ function Canvas() {
     setEdges((current) => addEdge(edge, current))
   }
 
-  const editEdge = (_: MouseEvent, edge: Edge) => updateEdgeData(edge.id, { editing: true })
-
   return (
     <div className="relative size-full">
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={displayedEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
@@ -72,7 +84,6 @@ function Canvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={connect}
-        onEdgeClick={editEdge}
         onPaneClick={addNodeAtCursor}
       />
 
