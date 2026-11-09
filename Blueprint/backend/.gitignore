@@ -1,0 +1,15 @@
+# Environment variables (API keys)
+.env
+.env.*
+!.env.example
+ 
+# Dependencies
+node_modules/
+backend/node_modules/
+ 
+# Build outputs
+dist/
+backend/dist/
+ 
+# Logs
+*.log
