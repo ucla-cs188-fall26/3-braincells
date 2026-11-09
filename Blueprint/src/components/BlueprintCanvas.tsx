@@ -15,10 +15,21 @@ import {
 import '@xyflow/react/dist/style.css'
 import { sendPlanToAI } from '../lib/api'
 import { DEFAULT_PLAN_ID, loadPlan, savePlan } from '../lib/planStorage'
+import {
+  addRule,
+  deleteRule,
+  removeRulesForBoxes,
+  rulesForBox,
+  updateRule,
+  type Rule,
+} from '../lib/rules'
 import BlockNode, { type BlockNodeType } from './BlockNode'
 import CanvasEmptyState from './CanvasEmptyState'
 import CanvasToolbar from './CanvasToolbar'
 import LabeledEdge, { type LabeledEdgeType } from './LabeledEdge'
+import RuleContextMenu from './RuleContextMenu'
+import RulesCard from './RulesCard'
+import { RulesContext } from './RulesContext'
 
 const nodeTypes = { block: BlockNode }
 const edgeTypes = { labeled: LabeledEdge }
@@ -38,13 +49,22 @@ function Canvas({ planId }: { planId: string }) {
   const [saved] = useState(() => loadPlan(planId))
   const [nodes, setNodes, onNodesChange] = useNodesState<BlockNodeType>(saved?.nodes ?? [])
   const [edges, setEdges, onEdgesChange] = useEdgesState<LabeledEdgeType>(saved?.edges ?? [])
+  // Rules sit next to nodes and edges as part of the plan; they are not stored in node data.
+  const [rules, setRules] = useState<Rule[]>(saved?.rules ?? [])
+  // The open rules card (one at a time) and where it sits on screen; local UI state, not saved.
+  const [ruleCard, setRuleCard] = useState<{ boxId: string; centerX: number; top: number } | null>(
+    null,
+  )
+  const [contextMenu, setContextMenu] = useState<{ boxId: string; x: number; y: number } | null>(
+    null,
+  )
   const { screenToFlowPosition } = useReactFlow()
   const viewportRef = useRef<Viewport>(saved?.viewport ?? { x: 0, y: 0, zoom: 1 })
 
   // Autosave shortly after the last change, so a drag doesn't write on every pixel.
   const save = useCallback(
-    () => savePlan(planId, { nodes, edges, viewport: viewportRef.current }),
-    [planId, nodes, edges],
+    () => savePlan(planId, { nodes, edges, rules, viewport: viewportRef.current }),
+    [planId, nodes, edges, rules],
   )
   useEffect(() => {
     const timer = setTimeout(save, SAVE_DELAY_MS)
@@ -95,7 +115,10 @@ function Canvas({ planId }: { planId: string }) {
   const addNodeInView = () => {
     const rect = frameRef.current?.getBoundingClientRect()
     if (!rect) return
-    const center = screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+    const center = screenToFlowPosition({
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    })
     let y = center.y
     while (nodes.some((node) => node.position.x === center.x && node.position.y === y)) y += 48
     addNodeAt({ x: center.x, y })
@@ -120,6 +143,66 @@ function Canvas({ planId }: { planId: string }) {
     }
   }
 
+  // Deleting a box (toolbar button or keyboard) also deletes its rules.
+  const handleNodesDelete = (deleted: BlockNodeType[]) => {
+    setRuleCard((current) =>
+      current && deleted.some((node) => node.id === current.boxId) ? null : current,
+    )
+    setRules((current) =>
+      removeRulesForBoxes(
+        current,
+        deleted.map((node) => node.id),
+      ),
+    )
+  }
+
+  // The card opens just below the box, centered on it, from the box's on-screen rect.
+  const openRuleCard = useCallback((boxId: string) => {
+    const element = frameRef.current?.querySelector(
+      `.react-flow__node[data-id="${CSS.escape(boxId)}"]`,
+    )
+    const rect = element?.getBoundingClientRect()
+    if (!rect) return
+    setContextMenu(null)
+    setRuleCard({ boxId, centerX: rect.left + rect.width / 2, top: rect.bottom + 8 })
+  }, [])
+
+  const closeRuleCard = useCallback(
+    ({ restoreFocus }: { restoreFocus: boolean }) => {
+      const boxId = ruleCard?.boxId
+      setRuleCard(null)
+      if (!restoreFocus || !boxId) return
+      requestAnimationFrame(() =>
+        frameRef.current
+          ?.querySelector<HTMLElement>(`[data-rules-corner="${CSS.escape(boxId)}"]`)
+          ?.focus(),
+      )
+    },
+    [ruleCard?.boxId],
+  )
+
+  const toggleRuleCard = (boxId: string) => {
+    if (ruleCard?.boxId === boxId) closeRuleCard({ restoreFocus: false })
+    else openRuleCard(boxId)
+  }
+
+  const deleteRuleFromCard = (ruleId: string) => {
+    if (!ruleCard) return
+    const remaining = deleteRule(rules, ruleId)
+    setRules(remaining)
+    // Deleting a box's last rule removes its corner, so the card closes with it.
+    if (rulesForBox(remaining, ruleCard.boxId).length === 0) setRuleCard(null)
+  }
+
+  // "+ Rule" works on exactly one selected box (one that already has a name).
+  const selectedBoxes = nodes.filter((node) => node.selected && node.data.title.trim() !== '')
+  const ruleDisabledReason =
+    selectedBoxes.length === 0
+      ? 'Select a box first'
+      : selectedBoxes.length > 1
+        ? 'Select just one box'
+        : null
+
   // A new edge opens its description field right away, like a new block does.
   const connect = (connection: Connection) => {
     const edge: LabeledEdgeType = {
@@ -130,13 +213,11 @@ function Canvas({ planId }: { planId: string }) {
     setEdges((current) => addEdge(edge, current))
   }
 
-  // A box only counts once it has a name; a brand-new box still being typed does not.
-  const hasBoxes = nodes.some((node) => node.data.title.trim() !== '')
-
   return (
     <div className="flex size-full flex-col gap-3">
       <CanvasToolbar
-        hasBoxes={hasBoxes}
+        ruleDisabledReason={ruleDisabledReason}
+        onAddRule={() => openRuleCard(selectedBoxes[0].id)}
         onAddBox={addNodeInView}
         onCheck={checkWithAI}
         checking={checking}
@@ -147,20 +228,58 @@ function Canvas({ planId }: { planId: string }) {
         ref={frameRef}
         className="bg-dot-grid relative min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-200"
       >
-        <ReactFlow
-          nodes={nodes}
-          edges={displayedEdges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          defaultEdgeOptions={defaultEdgeOptions}
-          connectionMode={ConnectionMode.Loose} // every handle can start or end a connection
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={connect}
-          onPaneClick={addNodeAtCursor}
-          defaultViewport={saved?.viewport}
-          onMoveEnd={handleMoveEnd}
-        />
+        <RulesContext.Provider value={{ rules, openRuleCard, toggleRuleCard }}>
+          <ReactFlow
+            nodes={nodes}
+            edges={displayedEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            defaultEdgeOptions={defaultEdgeOptions}
+            connectionMode={ConnectionMode.Loose} // every handle can start or end a connection
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={connect}
+            onNodesDelete={handleNodesDelete}
+            onPaneClick={addNodeAtCursor}
+            defaultViewport={saved?.viewport}
+            onMoveEnd={handleMoveEnd}
+            // Panning, zooming or dragging a box would leave the card or menu behind, so close them.
+            onMoveStart={() => {
+              setRuleCard(null)
+              setContextMenu(null)
+            }}
+            onNodeDragStart={() => setRuleCard(null)}
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault()
+              if (node.data.title.trim() === '') return
+              setRuleCard(null)
+              setContextMenu({ boxId: node.id, x: event.clientX, y: event.clientY })
+            }}
+          />
+        </RulesContext.Provider>
+
+        {contextMenu && (
+          <RuleContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onAddRule={() => openRuleCard(contextMenu.boxId)}
+            onClose={() => setContextMenu(null)}
+          />
+        )}
+
+        {ruleCard && (
+          <RulesCard
+            key={ruleCard.boxId}
+            boxName={nodes.find((node) => node.id === ruleCard.boxId)?.data.title ?? ''}
+            rules={rulesForBox(rules, ruleCard.boxId)}
+            centerX={ruleCard.centerX}
+            top={ruleCard.top}
+            onAdd={(text) => setRules((current) => addRule(current, ruleCard.boxId, text))}
+            onUpdate={(ruleId, text) => setRules((current) => updateRule(current, ruleId, text))}
+            onDelete={deleteRuleFromCard}
+            onClose={closeRuleCard}
+          />
+        )}
 
         {nodes.length === 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

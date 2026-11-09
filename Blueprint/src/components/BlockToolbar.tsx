@@ -5,16 +5,17 @@ import ToolbarPill from './ToolbarPill'
 type BlockToolbarProps = {
   isVisible: boolean
   onEdit: () => void
+  onAddRule: () => void
   onDelete: () => void
 }
 
-export default function BlockToolbar({ isVisible, onEdit, onDelete }: BlockToolbarProps) {
+export default function BlockToolbar({ isVisible, onEdit, onAddRule, onDelete }: BlockToolbarProps) {
   return (
     <NodeToolbar isVisible={isVisible} position={Position.Top} offset={12}>
       <ToolbarPill
         actions={[
           { label: 'Edit', Icon: PencilIcon, onClick: onEdit },
-          { label: 'Add Rule', Icon: DocumentTextIcon },
+          { label: 'Add Rule', Icon: DocumentTextIcon, onClick: onAddRule },
           { label: 'Mark for later', Icon: ClockIcon },
           { label: 'Delete', Icon: TrashIcon, onClick: onDelete, danger: true },
         ]}

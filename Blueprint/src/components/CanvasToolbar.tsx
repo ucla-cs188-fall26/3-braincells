@@ -1,7 +1,7 @@
 type CanvasToolbarProps = {
-  hasBoxes: boolean
+  ruleDisabledReason: string | null // why "+ Rule" can't be used right now, if it can't
   onAddBox: () => void
-  onAddRule?: () => void // placeholder until the rule popover exists
+  onAddRule: () => void
   onCheck: () => void
   checking: boolean
   checkError: string | null
@@ -13,7 +13,7 @@ const PLAIN_BUTTON_STYLE = `${BUTTON_STYLE} border-gray-300 bg-white text-ink ho
 
 // The row of actions that sits above the canvas.
 export default function CanvasToolbar({
-  hasBoxes,
+  ruleDisabledReason,
   onAddBox,
   onAddRule,
   onCheck,
@@ -29,11 +29,12 @@ export default function CanvasToolbar({
       {/* aria-disabled instead of disabled, so the button stays focusable and its tooltip still shows. */}
       <button
         type="button"
-        aria-disabled={!hasBoxes}
-        title={hasBoxes ? undefined : 'Add a box first'}
-        onClick={hasBoxes ? onAddRule : undefined}
+        data-rules-trigger
+        aria-disabled={ruleDisabledReason !== null}
+        title={ruleDisabledReason ?? undefined}
+        onClick={ruleDisabledReason === null ? onAddRule : undefined}
         className={`${BUTTON_STYLE} border-[#C9A84C] bg-[#FFF3C9] text-[#6B4A00] ${
-          hasBoxes ? 'hover:bg-[#FBE9A8]' : 'cursor-not-allowed opacity-50'
+          ruleDisabledReason === null ? 'hover:bg-[#FBE9A8]' : 'cursor-not-allowed opacity-50'
         }`}
       >
         + Rule
