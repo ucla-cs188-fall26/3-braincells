@@ -2,10 +2,8 @@ import BlueprintCanvas from '../components/BlueprintCanvas'
 
 export default function NewPlanPage() {
   return (
-    <main className="flex-1 p-6">
-      <div className="bg-dot-grid size-full overflow-hidden rounded-xl border border-gray-200">
-        <BlueprintCanvas />
-      </div>
+    <main className="min-h-0 flex-1 px-6 pt-3 pb-6">
+      <BlueprintCanvas />
     </main>
   )
 }

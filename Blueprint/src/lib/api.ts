@@ -10,6 +10,8 @@ export async function sendPlanToAI(planId: string = DEFAULT_PLAN_ID): Promise<st
       name: loadPlanName(planId),
       nodes: plan?.nodes ?? [],
       edges: plan?.edges ?? [],
+      // The AI only needs which box a rule belongs to and what it says, not the rule's own id.
+      rules: (plan?.rules ?? []).map(({ boxId, text }) => ({ boxId, text })),
     }),
   })
 

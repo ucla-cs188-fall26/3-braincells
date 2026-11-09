@@ -1,4 +1,4 @@
-import { useEffect, useState, type FocusEvent, type KeyboardEvent } from 'react'
+import { useContext, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react'
 import {
   Handle,
   Position,
@@ -7,7 +7,10 @@ import {
   type Node,
   type NodeProps,
 } from '@xyflow/react'
+import { rulesForBox } from '../lib/rules'
 import BlockToolbar from './BlockToolbar'
+import RuleCorner from './RuleCorner'
+import { RulesContext } from './RulesContext'
 
 export type BlockNodeData = {
   title: string
@@ -27,6 +30,21 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
   const [title, setTitle] = useState(data.title)
   const [description, setDescription] = useState(data.description)
   const updateNodeInternals = useUpdateNodeInternals()
+  const { rules, openRuleCard, toggleRuleCard } = useContext(RulesContext)
+  const boxRules = rulesForBox(rules, id)
+
+  // The corner pops when a rule is added (not when the plan loads or a rule is deleted).
+  const cornerRef = useRef<HTMLButtonElement>(null)
+  const previousCount = useRef(boxRules.length)
+  useEffect(() => {
+    if (boxRules.length > previousCount.current) {
+      cornerRef.current?.animate(
+        [{ transform: 'scale(1)' }, { transform: 'scale(1.5)' }, { transform: 'scale(1)' }],
+        { duration: 300, easing: 'ease-out' },
+      )
+    }
+    previousCount.current = boxRules.length
+  }, [boxRules.length])
 
   useEffect(() => {
     updateNodeInternals(id)
@@ -67,6 +85,7 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
       <BlockToolbar
         isVisible={selected && !data.editing}
         onEdit={startEditing}
+        onAddRule={() => openRuleCard(id)}
         onDelete={() => deleteElements({ nodes: [{ id }] })}
       />
 
@@ -97,9 +116,19 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
         </>
       ) : (
         <>
-          <div className={`${BOX_STYLE} ${selected ? HALO_STYLE : ''}`}>
+          <div className={`${BOX_STYLE} relative ${selected ? HALO_STYLE : ''}`}>
             <p className="text-sm font-bold">{data.title}</p>
             {data.description && <p className="text-xs text-gray-500">{data.description}</p>}
+            {boxRules.length > 0 && (
+              <RuleCorner
+                ref={cornerRef}
+                boxId={id}
+                count={boxRules.length}
+                boxName={data.title}
+                firstRuleText={boxRules[0].text}
+                onClick={() => toggleRuleCard(id)}
+              />
+            )}
           </div>
 
           {HANDLE_POSITIONS.map((position) => (

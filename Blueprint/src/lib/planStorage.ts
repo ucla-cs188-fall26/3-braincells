@@ -1,10 +1,12 @@
 import type { Viewport } from '@xyflow/react'
 import type { BlockNodeType } from '../components/BlockNode'
 import type { LabeledEdgeType } from '../components/LabeledEdge'
+import { cleanRules, type Rule } from './rules'
 
 export type PlanState = {
   nodes: BlockNodeType[]
   edges: LabeledEdgeType[]
+  rules: Rule[]
   viewport: Viewport
 }
 
@@ -43,13 +45,16 @@ function cleanEdges(edges: LabeledEdgeType[], nodes: BlockNodeType[]): LabeledEd
     }))
 }
 
-export function savePlan(planId: string, { nodes, edges, viewport }: PlanState) {
+const boxIds = (nodes: BlockNodeType[]) => new Set(nodes.map((node) => node.id))
+
+export function savePlan(planId: string, { nodes, edges, rules, viewport }: PlanState) {
   try {
     const cleanedNodes = cleanNodes(nodes)
     const payload = {
       version: VERSION,
       nodes: cleanedNodes,
       edges: cleanEdges(edges, cleanedNodes),
+      rules: cleanRules(rules, boxIds(cleanedNodes)),
       viewport,
     }
     localStorage.setItem(storageKey(planId), JSON.stringify(payload))
@@ -72,6 +77,8 @@ export function loadPlan(planId: string): PlanState | null {
     return {
       nodes,
       edges: cleanEdges(saved.edges, nodes),
+      // Plans saved before rules existed have no rules field; cleanRules turns that into [].
+      rules: cleanRules(saved.rules, boxIds(nodes)),
       viewport: validViewport ? { x, y, zoom } : { x: 0, y: 0, zoom: 1 },
     }
   } catch {
