@@ -10,11 +10,14 @@ import {
   useReactFlow,
   type Connection,
   type Viewport,
+  type XYPosition,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { sendPlanToAI } from '../lib/api'
 import { DEFAULT_PLAN_ID, loadPlan, savePlan } from '../lib/planStorage'
 import BlockNode, { type BlockNodeType } from './BlockNode'
 import CanvasEmptyState from './CanvasEmptyState'
+import CanvasToolbar from './CanvasToolbar'
 import LabeledEdge, { type LabeledEdgeType } from './LabeledEdge'
 
 const nodeTypes = { block: BlockNode }
@@ -67,8 +70,7 @@ function Canvas({ planId }: { planId: string }) {
     [edges],
   )
 
-  const addNodeAtCursor = (event: MouseEvent) => {
-    const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+  const addNodeAt = (position: XYPosition) => {
     setNodes((current) => [
       ...current,
       {
@@ -84,6 +86,40 @@ function Canvas({ planId }: { planId: string }) {
     ])
   }
 
+  const addNodeAtCursor = (event: MouseEvent) => {
+    addNodeAt(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
+  }
+
+  // "+ Box" drops a box in the middle of what is visible, nudged down past any box already there.
+  const frameRef = useRef<HTMLDivElement>(null)
+  const addNodeInView = () => {
+    const rect = frameRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const center = screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+    let y = center.y
+    while (nodes.some((node) => node.position.x === center.x && node.position.y === y)) y += 48
+    addNodeAt({ x: center.x, y })
+  }
+
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState<string | null>(null)
+
+  // Saves right away first, so the AI sees the latest edits rather than the last autosave.
+  const checkWithAI = async () => {
+    save()
+    setChecking(true)
+    setCheckError(null)
+    try {
+      const result = await sendPlanToAI(planId)
+      // TODO: show this in the UI (e.g. on the Build page).
+      console.log('AI response:', result)
+    } catch (err) {
+      setCheckError(err instanceof Error ? err.message : 'Something went wrong.')
+    } finally {
+      setChecking(false)
+    }
+  }
+
   // A new edge opens its description field right away, like a new block does.
   const connect = (connection: Connection) => {
     const edge: LabeledEdgeType = {
@@ -94,28 +130,44 @@ function Canvas({ planId }: { planId: string }) {
     setEdges((current) => addEdge(edge, current))
   }
 
+  // A box only counts once it has a name; a brand-new box still being typed does not.
+  const hasBoxes = nodes.some((node) => node.data.title.trim() !== '')
+
   return (
-    <div className="relative size-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={displayedEdges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        defaultEdgeOptions={defaultEdgeOptions}
-        connectionMode={ConnectionMode.Loose} // every handle can start or end a connection
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={connect}
-        onPaneClick={addNodeAtCursor}
-        defaultViewport={saved?.viewport}
-        onMoveEnd={handleMoveEnd}
+    <div className="flex size-full flex-col gap-3">
+      <CanvasToolbar
+        hasBoxes={hasBoxes}
+        onAddBox={addNodeInView}
+        onCheck={checkWithAI}
+        checking={checking}
+        checkError={checkError}
       />
 
-      {nodes.length === 0 && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <CanvasEmptyState />
-        </div>
-      )}
+      <div
+        ref={frameRef}
+        className="bg-dot-grid relative min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-200"
+      >
+        <ReactFlow
+          nodes={nodes}
+          edges={displayedEdges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
+          connectionMode={ConnectionMode.Loose} // every handle can start or end a connection
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={connect}
+          onPaneClick={addNodeAtCursor}
+          defaultViewport={saved?.viewport}
+          onMoveEnd={handleMoveEnd}
+        />
+
+        {nodes.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <CanvasEmptyState />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
