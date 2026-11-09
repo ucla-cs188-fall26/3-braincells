@@ -194,14 +194,10 @@ function Canvas({ planId }: { planId: string }) {
     if (rulesForBox(remaining, ruleCard.boxId).length === 0) setRuleCard(null)
   }
 
-  // "+ Rule" works on exactly one selected box (one that already has a name).
-  const selectedBoxes = nodes.filter((node) => node.selected && node.data.title.trim() !== '')
-  const ruleDisabledReason =
-    selectedBoxes.length === 0
-      ? 'Select a box first'
-      : selectedBoxes.length > 1
-        ? 'Select just one box'
-        : null
+  // "+ Rule" lists the boxes that already have a name, so the user picks which one the rule is for.
+  const namedBoxes = nodes
+    .filter((node) => node.data.title.trim() !== '')
+    .map((node) => ({ id: node.id, name: node.data.title }))
 
   // A new edge opens its description field right away, like a new block does.
   const connect = (connection: Connection) => {
@@ -216,8 +212,8 @@ function Canvas({ planId }: { planId: string }) {
   return (
     <div className="flex size-full flex-col gap-3">
       <CanvasToolbar
-        ruleDisabledReason={ruleDisabledReason}
-        onAddRule={() => openRuleCard(selectedBoxes[0].id)}
+        boxes={namedBoxes}
+        onPickRuleBox={openRuleCard}
         onAddBox={addNodeInView}
         onCheck={checkWithAI}
         checking={checking}

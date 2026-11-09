@@ -1,7 +1,10 @@
+import { useCallback, useState } from 'react'
+import RuleBoxMenu from './RuleBoxMenu'
+
 type CanvasToolbarProps = {
-  ruleDisabledReason: string | null // why "+ Rule" can't be used right now, if it can't
+  boxes: { id: string; name: string }[] // the named boxes a rule can be added to
   onAddBox: () => void
-  onAddRule: () => void
+  onPickRuleBox: (boxId: string) => void
   onCheck: () => void
   checking: boolean
   checkError: string | null
@@ -13,32 +16,61 @@ const PLAIN_BUTTON_STYLE = `${BUTTON_STYLE} border-gray-300 bg-white text-ink ho
 
 // The row of actions that sits above the canvas.
 export default function CanvasToolbar({
-  ruleDisabledReason,
+  boxes,
   onAddBox,
-  onAddRule,
+  onPickRuleBox,
   onCheck,
   checking,
   checkError,
 }: CanvasToolbarProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const ruleDisabledReason = boxes.length === 0 ? 'Add a box first' : null
+
+  const closeMenu = useCallback(({ restoreFocus }: { restoreFocus: boolean }) => {
+    setMenuOpen(false)
+    if (restoreFocus)
+      requestAnimationFrame(() =>
+        document.querySelector<HTMLElement>('[data-rules-button]')?.focus(),
+      )
+  }, [])
+
   return (
     <div role="toolbar" aria-label="Plan actions" className="flex items-center gap-3">
       <button type="button" onClick={onAddBox} className={PLAIN_BUTTON_STYLE}>
         + Box
       </button>
 
-      {/* aria-disabled instead of disabled, so the button stays focusable and its tooltip still shows. */}
-      <button
-        type="button"
-        data-rules-trigger
-        aria-disabled={ruleDisabledReason !== null}
-        title={ruleDisabledReason ?? undefined}
-        onClick={ruleDisabledReason === null ? onAddRule : undefined}
-        className={`${BUTTON_STYLE} border-[#C9A84C] bg-[#FFF3C9] text-[#6B4A00] ${
-          ruleDisabledReason === null ? 'hover:bg-[#FBE9A8]' : 'cursor-not-allowed opacity-50'
-        }`}
-      >
-        + Rule
-      </button>
+      <div className="relative">
+        {/* aria-disabled instead of disabled, so the button stays focusable and its tooltip still shows. */}
+        <button
+          type="button"
+          data-rules-trigger
+          data-rules-button
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-disabled={ruleDisabledReason !== null}
+          title={ruleDisabledReason ?? undefined}
+          onClick={ruleDisabledReason === null ? () => setMenuOpen((open) => !open) : undefined}
+          className={`${BUTTON_STYLE} border-gray-300 bg-white text-ink ${
+            ruleDisabledReason === null
+              ? 'hover:border-[#C9A84C] hover:bg-[#FFF3C9] hover:text-[#6B4A00]'
+              : 'cursor-not-allowed opacity-50'
+          }`}
+        >
+          + Rule
+        </button>
+
+        {menuOpen && (
+          <RuleBoxMenu
+            boxes={boxes}
+            onPick={(boxId) => {
+              setMenuOpen(false)
+              onPickRuleBox(boxId)
+            }}
+            onClose={closeMenu}
+          />
+        )}
+      </div>
 
       <button
         type="button"
