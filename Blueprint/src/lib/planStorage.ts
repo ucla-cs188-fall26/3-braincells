@@ -26,7 +26,12 @@ function cleanNodes(nodes: BlockNodeType[]): BlockNodeType[] {
       type: 'block',
       position: node.position,
       origin: node.origin,
-      data: { title: node.data.title, description: node.data.description ?? '', editing: false },
+      data: {
+        title: node.data.title,
+        description: node.data.description ?? '',
+        editing: false,
+        later: node.data.later === true,
+      },
     }))
 }
 

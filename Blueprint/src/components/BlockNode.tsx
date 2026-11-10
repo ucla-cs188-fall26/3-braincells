@@ -16,12 +16,14 @@ export type BlockNodeData = {
   title: string
   description: string
   editing: boolean
+  later?: boolean
 }
 
 export type BlockNodeType = Node<BlockNodeData, 'block'>
 
 const BOX_STYLE = 'flex flex-col rounded-xl border border-brand bg-blue-50 px-3 py-2'
-const HALO_STYLE = 'ring-4 ring-brand/20'
+const LATER_BOX_STYLE = 'flex flex-col rounded-xl border-2 border-dotted border-gray-400 bg-white/40 px-3 py-2'
+const HALO_STYLE ='ring-4 ring-brand/20'
 
 const HANDLE_POSITIONS = [Position.Top, Position.Right, Position.Bottom, Position.Left]
 
@@ -86,6 +88,8 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
         isVisible={selected && !data.editing}
         onEdit={startEditing}
         onAddRule={() => openRuleCard(id)}
+        onMarkForLater={() => updateNodeData(id, { later: !data.later })}
+        isLater={!!data.later}
         onDelete={() => deleteElements({ nodes: [{ id }] })}
       />
 
@@ -116,9 +120,15 @@ export default function BlockNode({ id, data, selected }: NodeProps<BlockNodeTyp
         </>
       ) : (
         <>
-          <div className={`${BOX_STYLE} relative ${selected ? HALO_STYLE : ''}`}>
-            <p className="text-sm font-bold">{data.title}</p>
-            {data.description && <p className="text-xs text-gray-500">{data.description}</p>}
+          <div
+            className={`${data.later ? LATER_BOX_STYLE : BOX_STYLE} relative ${selected ? HALO_STYLE : ''}`}
+          >
+            <p className={`text-sm font-bold ${data.later ? 'text-gray-500' : ''}`}>{data.title}</p>
+            {data.description && (
+              <p className={`text-xs ${data.later ? 'text-gray-400' : 'text-gray-500'}`}>
+                {data.description}
+              </p>
+            )}
             {boxRules.length > 0 && (
               <RuleCorner
                 ref={cornerRef}
