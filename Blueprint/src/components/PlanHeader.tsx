@@ -1,5 +1,7 @@
-import { Link, NavLink } from 'react-router'
-import { DEFAULT_PLAN_ID } from '../lib/planStorage'
+import { useState } from 'react'
+import { Link, NavLink, useNavigate } from 'react-router'
+import { sendPlanToAI } from '../lib/api'
+import { DEFAULT_PLAN_ID, saveGeneratedCode } from '../lib/planStorage'
 import { ROUTES } from '../routes'
 import PlanName from './PlanName'
 
@@ -12,7 +14,26 @@ const STEPS = [
 const PILL_STYLE =
   'rounded-full border px-4 py-1.5 text-sm no-underline transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand'
 
+// The top bar. Its button asks the AI to generate code from the saved plan and opens the Build page.
 export default function PlanHeader() {
+  const navigate = useNavigate()
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
+
+  const sendPlan = async () => {
+    setSending(true)
+    setSendError(null)
+    try {
+      const code = await sendPlanToAI(DEFAULT_PLAN_ID)
+      saveGeneratedCode(DEFAULT_PLAN_ID, code)
+      navigate(ROUTES.build)
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Something went wrong.')
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-gray-200 bg-white px-6 py-3">
       <div className="flex min-w-0 items-center gap-4">
@@ -42,12 +63,18 @@ export default function PlanHeader() {
       </nav>
 
       <div className="flex items-center gap-3 justify-self-end">
-        {/* Placeholder: checking the plan moved to "Check with AI" above the canvas; this button gets a new job later. */}
+        {sendError && (
+          <span role="alert" className="text-sm text-red-600">
+            {sendError}
+          </span>
+        )}
         <button
           type="button"
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          onClick={sendPlan}
+          disabled={sending}
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-wait disabled:opacity-60"
         >
-          Send plan to AI
+          {sending ? 'Sending…' : 'Send plan to AI'}
         </button>
       </div>
     </header>

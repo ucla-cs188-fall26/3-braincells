@@ -91,6 +91,26 @@ export function loadPlan(planId: string): PlanState | null {
   }
 }
 
+const codeKey = (planId: string) => `blueprint:plan-code:${planId}`
+
+// The code the AI generated for this plan, or null if none has been generated yet.
+export function loadGeneratedCode(planId: string): string | null {
+  try {
+    return localStorage.getItem(codeKey(planId))
+  } catch {
+    return null
+  }
+}
+
+// Remembers the generated code so the Build page can show it after a reload.
+export function saveGeneratedCode(planId: string, code: string) {
+  try {
+    localStorage.setItem(codeKey(planId), code)
+  } catch {
+    // Same as savePlan: a failed write isn't worth breaking the page.
+  }
+}
+
 const nameKey = (planId: string) => `blueprint:plan-name:${planId}`
 
 export function loadPlanName(planId: string): string {
