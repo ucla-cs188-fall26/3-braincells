@@ -14,9 +14,6 @@ const BUTTON_STYLE =
   "rounded-lg border px-4 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand";
 const PLAIN_BUTTON_STYLE = `${BUTTON_STYLE} border-gray-300 bg-white text-ink hover:bg-gray-50`;
 
-// Checking the plan isn't built yet (the generate-code call moved to "Send plan to AI"); set to false when it is.
-const CHECK_COMING_SOON = true;
-
 // The floating container of actions that sits on top of the canvas.
 export default function CanvasToolbar({
   boxes,
@@ -93,12 +90,9 @@ export default function CanvasToolbar({
 
         <button
           type="button"
-          onClick={CHECK_COMING_SOON ? undefined : onCheck}
+          onClick={onCheck}
           disabled={checking}
-          // aria-disabled instead of disabled, so the button stays focusable and its tooltip still shows.
-          aria-disabled={CHECK_COMING_SOON}
-          title={CHECK_COMING_SOON ? "Plan checking is coming soon" : undefined}
-          className={`${PLAIN_BUTTON_STYLE} disabled:cursor-wait disabled:opacity-60 ${CHECK_COMING_SOON ? "cursor-not-allowed opacity-60" : ""}`}
+          className={`${PLAIN_BUTTON_STYLE} disabled:cursor-wait disabled:opacity-60`}
         >
           {checking ? "Sending…" : "Check with AI"}
         </button>

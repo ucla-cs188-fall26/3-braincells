@@ -20,6 +20,14 @@ import {
   type XYPosition,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { checkPlan } from "../lib/api";
+import {
+  cleanIssues,
+  loadPlanCheck,
+  removeIssuesForBoxes,
+  savePlanCheck,
+  type PlanCheck,
+} from "../lib/planCheck";
 import { DEFAULT_PLAN_ID, loadPlan, savePlan } from "../lib/planStorage";
 import {
   addRule,
@@ -29,6 +37,7 @@ import {
   updateRule,
   type Rule,
 } from "../lib/rules";
+import { suggestionsToElements } from "../lib/suggestions";
 import BlockNode, { type BlockNodeType } from "./BlockNode";
 import CanvasEmptyState from "./CanvasEmptyState";
 import CanvasToolbar from "./CanvasToolbar";
@@ -72,7 +81,12 @@ function Canvas({ planId }: { planId: string }) {
     x: number;
     y: number;
   } | null>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  // The latest AI check (summary and issues), saved separately from the plan itself.
+  const [planCheck, setPlanCheck] = useState<PlanCheck | null>(() =>
+    loadPlanCheck(planId, new Set(saved?.nodes.map((node) => node.id))),
+  );
+  useEffect(() => savePlanCheck(planId, planCheck), [planId, planCheck]);
+  const { screenToFlowPosition, getNodes } = useReactFlow();
   const viewportRef = useRef<Viewport>(
     saved?.viewport ?? { x: 0, y: 0, zoom: 1 },
   );
@@ -149,13 +163,37 @@ function Canvas({ planId }: { planId: string }) {
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
 
-  // Placeholder: checking the plan isn't built yet. Generating code moved to "Send plan to AI" in the header.
+  // Saves right away first, so the AI sees the latest edits rather than the last autosave.
+  // The AI's suggestions are added as boxes (with arrows) marked "suggested"; suggestions from an
+  // earlier check that weren't kept are replaced.
   const checkWithAI = async () => {
     save();
     setChecking(true);
     setCheckError(null);
     try {
-      // TODO: call the plan-check endpoint and show the issues.
+      const review = await checkPlan(planId);
+      // Read the boxes now, not from before the request: the user may have edited while waiting.
+      const current = getNodes() as BlockNodeType[];
+      const kept = current.filter((node) => !node.data.suggested);
+      const replaced = new Set(
+        current.filter((node) => node.data.suggested).map((node) => node.id),
+      );
+      const added = suggestionsToElements(review.suggestions, kept);
+
+      setNodes([...kept, ...added.nodes]);
+      setEdges((existing) => [
+        ...existing.filter(
+          (edge) => !replaced.has(edge.source) && !replaced.has(edge.target),
+        ),
+        ...added.edges,
+      ]);
+      setRules((existing) => removeRulesForBoxes(existing, [...replaced]));
+      setRuleCard((card) => (card && replaced.has(card.boxId) ? null : card));
+      setPlanCheck({
+        checkedAt: Date.now(),
+        summary: review.summary,
+        issues: cleanIssues(review.issues, new Set(kept.map((node) => node.id))),
+      });
     } catch (err) {
       setCheckError(
         err instanceof Error ? err.message : "Something went wrong.",
@@ -165,8 +203,16 @@ function Canvas({ planId }: { planId: string }) {
     }
   };
 
-  // Deleting a box (toolbar button or keyboard) also deletes its rules.
+  // Deleting a box (toolbar button or keyboard) also deletes its rules and the issues about it.
   const handleNodesDelete = (deleted: BlockNodeType[]) => {
+    setPlanCheck((check) =>
+      check
+        ? removeIssuesForBoxes(
+            check,
+            deleted.map((node) => node.id),
+          )
+        : check,
+    );
     setRuleCard((current) =>
       current && deleted.some((node) => node.id === current.boxId)
         ? null

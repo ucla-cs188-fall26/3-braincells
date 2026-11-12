@@ -17,6 +17,7 @@ export type BlockNodeData = {
   description: string
   editing: boolean
   later?: boolean
+  suggested?: boolean // added by the AI check and not kept yet
 }
 
 export type BlockNodeType = Node<BlockNodeData, 'block'>
