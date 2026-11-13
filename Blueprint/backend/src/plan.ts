@@ -182,7 +182,8 @@ Suggestions:
 - Each must be a whole feature or part of the project, the same size as the boxes already in the plan, not a detail of one of them. A beginner could build it.
 - Do not give four versions of the same idea. Cover different kinds of help: a missing step in the main journey, a missing supporting part (such as storage or sign-in), and a feature that makes the project more useful or enjoyable for the people it is for.
 - Boxes with no arrows may deserve a suggestion that connects them into the journey.
-- Each suggestion has a short title (a few words), a one-sentence description of what it does and why it helps, and links.
+- Each suggestion has a title (one to three words, like "Phone storage"), a description (two to five words saying what the box does, like "Saves tasks"), a why, and links.
+- The why is one short sentence that starts from something in this plan and says why the box helps, like "Your plan collects notes but has nowhere to keep them." Do not start it with "This box".
 - Every link joins the new box to one existing box by its id. direction says which way the arrow points. "arrow_into_new_box" means the arrow points from that existing box into the new box (the new box receives something from the existing one, for example a Storage box that Upload notes saves into). "arrow_out_of_new_box" means the arrow points from the new box to that existing box (the existing box receives something from the new one, for example a Sign Up box that leads into Login). The label is one to three words describing what travels along the arrow.
 - Every suggestion needs at least one link. Do not suggest something the plan already has.
 
@@ -215,6 +216,7 @@ export const ReviewSchema = z.object({
     z.object({
       title: z.string(),
       description: z.string(),
+      why: z.string(),
       links: z.array(
         z.object({
           boxId: z.string(),
@@ -287,7 +289,7 @@ export function sanitizeReview(review: Review, plan: Plan): Omit<Review, "purpos
     const title = clip(suggestion.title, 60);
     const key = title.toLowerCase();
     if (title === "" || existingTitles.has(key) || usedTitles.has(key)) continue;
-    if (isAboutParked(`${suggestion.title} ${suggestion.description}`)) continue;
+    if (isAboutParked(`${suggestion.title} ${suggestion.description} ${suggestion.why}`)) continue;
 
     const seenLinks = new Set<string>();
     const links = [];
@@ -300,7 +302,12 @@ export function sanitizeReview(review: Review, plan: Plan): Omit<Review, "purpos
     if (links.length === 0) continue;
 
     usedTitles.add(key);
-    suggestions.push({ title, description: clip(suggestion.description, 200), links });
+    suggestions.push({
+      title,
+      description: clip(suggestion.description, 60),
+      why: clip(suggestion.why, 160),
+      links,
+    });
     if (suggestions.length === MAX_SUGGESTIONS) break;
   }
 

@@ -32,6 +32,8 @@ function cleanNodes(nodes: BlockNodeType[]): BlockNodeType[] {
         editing: false,
         later: node.data.later === true,
         suggested: node.data.suggested === true,
+        why: node.data.suggested === true ? (node.data.why ?? '') : '',
+        kept: node.data.kept === true,
       },
     }))
 }

@@ -17,6 +17,7 @@ export type LinkDirection = 'arrow_into_new_box' | 'arrow_out_of_new_box'
 export type PlanSuggestion = {
   title: string
   description: string
+  why: string // one sentence on why the box helps, shown when the box is clicked
   links: { boxId: string; direction: LinkDirection; label: string }[]
 }
 
@@ -77,6 +78,7 @@ function cleanSuggestions(raw: unknown): PlanSuggestion[] {
     suggestions.push({
       title: item.title.trim(),
       description: typeof item.description === 'string' ? item.description : '',
+      why: typeof item.why === 'string' ? item.why : '',
       links,
     })
   }
@@ -93,6 +95,14 @@ export function parseReview(raw: unknown): PlanReview {
     issues: cleanIssues(raw.issues),
     suggestions: cleanSuggestions(raw.suggestions),
   }
+}
+
+export const issuesForBox = (issues: PlanIssue[], boxId: string) =>
+  issues.filter((issue) => issue.boxId === boxId)
+
+// The most serious severity among the issues, or null if there are none.
+export function worstSeverity(issues: PlanIssue[]): Severity | null {
+  return SEVERITIES.find((severity) => issues.some((issue) => issue.severity === severity)) ?? null
 }
 
 // Drops the issues about the given boxes, for when those boxes are deleted.

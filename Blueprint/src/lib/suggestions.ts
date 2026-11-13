@@ -60,6 +60,7 @@ export function suggestionsToElements(
         description: suggestion.description,
         editing: false,
         suggested: true,
+        why: suggestion.why,
       },
     }
     nodes.push(node)

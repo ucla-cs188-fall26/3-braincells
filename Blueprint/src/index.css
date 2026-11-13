@@ -12,6 +12,10 @@
   --color-brand-hover: #1d5aa6;
 
   --color-edge: #6b7280;
+
+  /* Boxes and arrows the AI added and the user hasn't kept yet */
+  --color-ai: #b4421d;
+  --color-ai-bg: #fdf3ee;
 }
 
 @layer base {

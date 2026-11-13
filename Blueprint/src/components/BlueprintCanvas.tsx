@@ -41,6 +41,8 @@ import { suggestionsToElements } from "../lib/suggestions";
 import BlockNode, { type BlockNodeType } from "./BlockNode";
 import CanvasEmptyState from "./CanvasEmptyState";
 import CanvasToolbar from "./CanvasToolbar";
+import CheckResultsPanel from "./CheckResultsPanel";
+import { IssuesContext } from "./IssuesContext";
 import LabeledEdge, { type LabeledEdgeType } from "./LabeledEdge";
 import RuleContextMenu from "./RuleContextMenu";
 import RulesCard from "./RulesCard";
@@ -51,6 +53,7 @@ const edgeTypes = { labeled: LabeledEdge };
 
 const EDGE_COLOR = "var(--color-edge)";
 const SELECTED_EDGE_COLOR = "var(--color-brand)";
+const SUGGESTED_EDGE_COLOR = "var(--color-ai)";
 const defaultEdgeOptions = {
   type: "labeled",
   markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLOR },
@@ -58,6 +61,7 @@ const defaultEdgeOptions = {
 };
 
 const SAVE_DELAY_MS = 400;
+const NOTE_SECONDS = 10; // how long "AI added ..." stays after a check
 
 function Canvas({ planId }: { planId: string }) {
   // Read storage once, on first render.
@@ -86,7 +90,10 @@ function Canvas({ planId }: { planId: string }) {
     loadPlanCheck(planId, new Set(saved?.nodes.map((node) => node.id))),
   );
   useEffect(() => savePlanCheck(planId, planCheck), [planId, planCheck]);
-  const { screenToFlowPosition, getNodes } = useReactFlow();
+  // Whether the results panel is showing; it opens after each check and can be closed and reopened.
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const { screenToFlowPosition, getNodes, fitView, deleteElements } =
+    useReactFlow();
   const viewportRef = useRef<Viewport>(
     saved?.viewport ?? { x: 0, y: 0, zoom: 1 },
   );
@@ -107,19 +114,53 @@ function Canvas({ planId }: { planId: string }) {
     save();
   };
 
-  // Selected edges turn blue; every other edge gets the grey look back explicitly.
+  // Selected edges turn blue and arrows the AI added are orange and dashed; every other edge gets
+  // the grey look back explicitly.
+  const suggestedIds = useMemo(
+    () =>
+      new Set(
+        nodes.filter((node) => node.data.suggested).map((node) => node.id),
+      ),
+    [nodes],
+  );
+  // An arrow is the AI's while either end is a dashed box; keeping the box makes it a normal arrow.
+  const isSuggestedEdge = useCallback(
+    (edge: { source: string; target: string }) =>
+      suggestedIds.has(edge.source) || suggestedIds.has(edge.target),
+    [suggestedIds],
+  );
   const displayedEdges = useMemo(
     () =>
       edges.map((edge) => {
-        const color = edge.selected ? SELECTED_EDGE_COLOR : EDGE_COLOR;
+        const suggested = isSuggestedEdge(edge);
+        const color = edge.selected
+          ? SELECTED_EDGE_COLOR
+          : suggested
+            ? SUGGESTED_EDGE_COLOR
+            : EDGE_COLOR;
         return {
           ...edge,
           markerEnd: { type: MarkerType.ArrowClosed, color },
-          style: { strokeWidth: 2, stroke: color },
+          style: {
+            strokeWidth: 2,
+            stroke: color,
+            ...(suggested ? { strokeDasharray: "6 4" } : {}),
+          },
         };
       }),
-    [edges],
+    [edges, isSuggestedEdge],
   );
+
+  // What the AI added and the user hasn't kept yet, for the note at the bottom of the canvas.
+  const suggestedBoxes = nodes.filter((node) => node.data.suggested);
+  const suggestedArrowCount = edges.filter(isSuggestedEdge).length;
+  // The note shows for a few seconds after a check, not for as long as dashed boxes remain.
+  const [noteOpen, setNoteOpen] = useState(false);
+  useEffect(() => {
+    if (!noteOpen) return;
+    const timer = setTimeout(() => setNoteOpen(false), NOTE_SECONDS * 1000);
+    return () => clearTimeout(timer);
+  }, [noteOpen]);
 
   const addNodeAt = (position: XYPosition) => {
     setNodes((current) => [
@@ -194,6 +235,8 @@ function Canvas({ planId }: { planId: string }) {
         summary: review.summary,
         issues: cleanIssues(review.issues, new Set(kept.map((node) => node.id))),
       });
+      setResultsOpen(true);
+      setNoteOpen(true);
     } catch (err) {
       setCheckError(
         err instanceof Error ? err.message : "Something went wrong.",
@@ -201,6 +244,14 @@ function Canvas({ planId }: { planId: string }) {
     } finally {
       setChecking(false);
     }
+  };
+
+  // Clicking an issue in the results selects its box and brings it into view.
+  const selectBox = (boxId: string) => {
+    setNodes((current) =>
+      current.map((node) => ({ ...node, selected: node.id === boxId })),
+    );
+    fitView({ nodes: [{ id: boxId }], duration: 300, maxZoom: 1.2 });
   };
 
   // Deleting a box (toolbar button or keyboard) also deletes its rules and the issues about it.
@@ -301,6 +352,12 @@ function Canvas({ planId }: { planId: string }) {
         />
 
         <RulesContext.Provider value={{ rules, openRuleCard, toggleRuleCard }}>
+          <IssuesContext.Provider
+            value={{
+              issues: planCheck?.issues ?? [],
+              openResults: () => setResultsOpen(true),
+            }}
+          >
           <ReactFlow
             nodes={nodes}
             edges={displayedEdges}
@@ -332,7 +389,27 @@ function Canvas({ planId }: { planId: string }) {
               });
             }}
           />
+          </IssuesContext.Provider>
         </RulesContext.Provider>
+
+        {planCheck && resultsOpen && (
+          <CheckResultsPanel
+            check={planCheck}
+            boxNames={new Map(nodes.map((node) => [node.id, node.data.title]))}
+            suggestedCount={suggestedBoxes.length}
+            onSelectBox={selectBox}
+            onClose={() => setResultsOpen(false)}
+          />
+        )}
+        {planCheck && !resultsOpen && (
+          <button
+            type="button"
+            onClick={() => setResultsOpen(true)}
+            className="absolute top-3 right-3 z-10 rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-ink shadow-lg transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          >
+            AI results
+          </button>
+        )}
 
         {contextMenu && (
           <RuleContextMenu
@@ -361,6 +438,32 @@ function Canvas({ planId }: { planId: string }) {
             onDelete={deleteRuleFromCard}
             onClose={closeRuleCard}
           />
+        )}
+
+        {noteOpen && suggestedBoxes.length > 0 && (
+          <div
+            role="status"
+            className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-4 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-lg"
+          >
+            <span>
+              AI added {suggestedBoxes.length}{" "}
+              {suggestedBoxes.length === 1 ? "box" : "boxes"} and{" "}
+              {suggestedArrowCount}{" "}
+              {suggestedArrowCount === 1 ? "arrow" : "arrows"}. Click a dashed
+              box to see why.
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                deleteElements({
+                  nodes: suggestedBoxes.map((node) => ({ id: node.id })),
+                })
+              }
+              className="shrink-0 font-semibold text-blue-200 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            >
+              Undo all
+            </button>
+          </div>
         )}
 
         {nodes.length === 0 && (
