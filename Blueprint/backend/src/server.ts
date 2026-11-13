@@ -1,73 +1,85 @@
 import express from "express";
+import type { ErrorRequestHandler, Response } from "express";
 import cors from "cors";
 import "dotenv/config";
-import { callAIModel } from "./service/ai.service.js";
+import { AIError, callAIModel, reviewPlan } from "./service/ai.service.js";
+import {
+  PlanRequestSchema,
+  REVIEW_SYSTEM_PROMPT,
+  buildGeneratePrompt,
+  buildReviewPrompt,
+  describeRequestError,
+  normalizePlan,
+  sanitizeReview,
+  type Plan,
+} from "./plan.js";
 
 const app = express();
- 
+
 // get port info from .env file
 const PORT = Number(process.env.PORT) || 3001;
- 
+
 // middleware
 app.use(cors());
-app.use(express.json());
- 
+app.use(express.json({ limit: "200kb" }));
+
 // backend test endpoint
 app.get("/api/health", (req, res) => {
   res.json({ message: "Backend is working!" });
 });
 
-type PlanBlock = { id: string; data: { title: string; description?: string } };
-type PlanRule = { boxId: string; text: string };
-type PlanLink = { source: string; target: string; data?: { label?: string } };
-
-// turns the canvas (blocks + arrows) into a text prompt for the model
-function buildPrompt(name: string, nodes: PlanBlock[], edges: PlanLink[], rules: PlanRule[]) {
-  const titles = new Map(nodes.map((n) => [n.id, n.data.title]));
-  // rules are listed under their box; a rule whose box was not sent is left out
-  const blocks = nodes
-    .map((n) => {
-      const line = `- ${n.data.title}${n.data.description ? `: ${n.data.description}` : ""}`;
-      const boxRules = rules.filter((r) => r.boxId === n.id);
-      if (boxRules.length === 0) return line;
-      return `${line}\n  Rules:\n${boxRules.map((r) => `  - ${r.text}`).join("\n")}`;
-    })
-    .join("\n");
-  const links = edges
-    .map((e) => {
-      const label = e.data?.label ? ` (${e.data.label})` : "";
-      return `- ${titles.get(e.source)} -> ${titles.get(e.target)}${label}`;
-    })
-    .join("\n");
-
-  return `Here is a plan for a software project called "${name}".
-
-Blocks:
-${blocks || "(none)"}
-
-Connections:
-${links || "(none)"}
-
-Generate code that implements this plan.`;
+// checks the request body and cleans it up; sends the 400 itself and returns null if it is not valid
+function readPlan(body: unknown, res: Response): Plan | null {
+  const parsed = PlanRequestSchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: describeRequestError(parsed.error) });
+    return null;
+  }
+  return normalizePlan(parsed.data);
 }
 
-// send the plan to the AI model
+// send the plan to the AI model and get code back
 app.post("/api/generate", async (req, res) => {
-  const { name = "Untitled plan", nodes, edges = [], rules = [] } = req.body ?? {};
-  if (!Array.isArray(nodes) || nodes.length === 0) {
-    res.status(400).json({ error: "The plan has no blocks yet." });
+  const plan = readPlan(req.body, res);
+  if (!plan) return;
+
+  const result = await callAIModel(buildGeneratePrompt(plan));
+  res.json({ result });
+});
+
+// ask the AI model to review the plan: issues and suggested boxes
+app.post("/api/check", async (req, res) => {
+  const plan = readPlan(req.body, res);
+  if (!plan) return;
+
+  const review = await reviewPlan(REVIEW_SYSTEM_PROMPT, buildReviewPrompt(plan));
+  res.json(sanitizeReview(review, plan));
+});
+
+// turns errors into readable { error } responses (express 5 passes async errors here too)
+const handleError: ErrorRequestHandler = (err, req, res, next) => {
+  if (res.headersSent) {
+    next(err);
     return;
   }
-
-  try {
-    const result = await callAIModel(buildPrompt(name, nodes, edges, Array.isArray(rules) ? rules : []));
-    res.json({ result });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "The AI request failed." });
+  if (err instanceof AIError) {
+    res.status(err.status).json({ error: err.message });
+    return;
   }
-});
- 
+  const type = typeof err === "object" && err !== null && "type" in err ? err.type : undefined;
+  if (type === "entity.too.large") {
+    res.status(413).json({ error: "The plan is too large to send (limit 200 KB)." });
+    return;
+  }
+  if (type === "entity.parse.failed") {
+    res.status(400).json({ error: "The request wasn't valid JSON." });
+    return;
+  }
+  console.error(err);
+  res.status(500).json({ error: "Something went wrong on the server." });
+};
+app.use(handleError);
+
 // start server
 app.listen(PORT, () => {
   console.log(`Backend running on port ${PORT}`);

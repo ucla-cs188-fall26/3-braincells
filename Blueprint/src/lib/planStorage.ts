@@ -26,7 +26,15 @@ function cleanNodes(nodes: BlockNodeType[]): BlockNodeType[] {
       type: 'block',
       position: node.position,
       origin: node.origin,
-      data: { title: node.data.title, description: node.data.description ?? '', editing: false },
+      data: {
+        title: node.data.title,
+        description: node.data.description ?? '',
+        editing: false,
+        later: node.data.later === true,
+        suggested: node.data.suggested === true,
+        why: node.data.suggested === true ? (node.data.why ?? '') : '',
+        kept: node.data.kept === true,
+      },
     }))
 }
 
@@ -83,6 +91,26 @@ export function loadPlan(planId: string): PlanState | null {
     }
   } catch {
     return null
+  }
+}
+
+const codeKey = (planId: string) => `blueprint:plan-code:${planId}`
+
+// The code the AI generated for this plan, or null if none has been generated yet.
+export function loadGeneratedCode(planId: string): string | null {
+  try {
+    return localStorage.getItem(codeKey(planId))
+  } catch {
+    return null
+  }
+}
+
+// Remembers the generated code so the Build page can show it after a reload.
+export function saveGeneratedCode(planId: string, code: string) {
+  try {
+    localStorage.setItem(codeKey(planId), code)
+  } catch {
+    // Same as savePlan: a failed write isn't worth breaking the page.
   }
 }
 

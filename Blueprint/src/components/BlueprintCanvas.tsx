@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import {
   ConnectionMode,
   MarkerType,
@@ -11,10 +18,17 @@ import {
   type Connection,
   type Viewport,
   type XYPosition,
-} from '@xyflow/react'
-import '@xyflow/react/dist/style.css'
-import { sendPlanToAI } from '../lib/api'
-import { DEFAULT_PLAN_ID, loadPlan, savePlan } from '../lib/planStorage'
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { checkPlan } from "../lib/api";
+import {
+  cleanIssues,
+  loadPlanCheck,
+  removeIssuesForBoxes,
+  savePlanCheck,
+  type PlanCheck,
+} from "../lib/planCheck";
+import { DEFAULT_PLAN_ID, loadPlan, savePlan } from "../lib/planStorage";
 import {
   addRule,
   deleteRule,
@@ -22,209 +36,328 @@ import {
   rulesForBox,
   updateRule,
   type Rule,
-} from '../lib/rules'
-import BlockNode, { type BlockNodeType } from './BlockNode'
-import CanvasEmptyState from './CanvasEmptyState'
-import CanvasToolbar from './CanvasToolbar'
-import LabeledEdge, { type LabeledEdgeType } from './LabeledEdge'
-import RuleContextMenu from './RuleContextMenu'
-import RulesCard from './RulesCard'
-import { RulesContext } from './RulesContext'
+} from "../lib/rules";
+import { suggestionsToElements } from "../lib/suggestions";
+import BlockNode, { type BlockNodeType } from "./BlockNode";
+import CanvasEmptyState from "./CanvasEmptyState";
+import CanvasToolbar from "./CanvasToolbar";
+import CheckResultsPanel from "./CheckResultsPanel";
+import { IssuesContext } from "./IssuesContext";
+import LabeledEdge, { type LabeledEdgeType } from "./LabeledEdge";
+import RuleContextMenu from "./RuleContextMenu";
+import RulesCard from "./RulesCard";
+import { RulesContext } from "./RulesContext";
 
-const nodeTypes = { block: BlockNode }
-const edgeTypes = { labeled: LabeledEdge }
+const nodeTypes = { block: BlockNode };
+const edgeTypes = { labeled: LabeledEdge };
 
-const EDGE_COLOR = 'var(--color-edge)'
-const SELECTED_EDGE_COLOR = 'var(--color-brand)'
+const EDGE_COLOR = "var(--color-edge)";
+const SELECTED_EDGE_COLOR = "var(--color-brand)";
+const SUGGESTED_EDGE_COLOR = "var(--color-ai)";
 const defaultEdgeOptions = {
-  type: 'labeled',
+  type: "labeled",
   markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLOR },
   style: { strokeWidth: 2, stroke: EDGE_COLOR },
-}
+};
 
-const SAVE_DELAY_MS = 400
+const SAVE_DELAY_MS = 400;
+const NOTE_SECONDS = 10; // how long "AI added ..." stays after a check
 
 function Canvas({ planId }: { planId: string }) {
   // Read storage once, on first render.
-  const [saved] = useState(() => loadPlan(planId))
-  const [nodes, setNodes, onNodesChange] = useNodesState<BlockNodeType>(saved?.nodes ?? [])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<LabeledEdgeType>(saved?.edges ?? [])
+  const [saved] = useState(() => loadPlan(planId));
+  const [nodes, setNodes, onNodesChange] = useNodesState<BlockNodeType>(
+    saved?.nodes ?? [],
+  );
+  const [edges, setEdges, onEdgesChange] = useEdgesState<LabeledEdgeType>(
+    saved?.edges ?? [],
+  );
   // Rules sit next to nodes and edges as part of the plan; they are not stored in node data.
-  const [rules, setRules] = useState<Rule[]>(saved?.rules ?? [])
+  const [rules, setRules] = useState<Rule[]>(saved?.rules ?? []);
   // The open rules card (one at a time) and where it sits on screen; local UI state, not saved.
-  const [ruleCard, setRuleCard] = useState<{ boxId: string; centerX: number; top: number } | null>(
-    null,
-  )
-  const [contextMenu, setContextMenu] = useState<{ boxId: string; x: number; y: number } | null>(
-    null,
-  )
-  const { screenToFlowPosition } = useReactFlow()
-  const viewportRef = useRef<Viewport>(saved?.viewport ?? { x: 0, y: 0, zoom: 1 })
+  const [ruleCard, setRuleCard] = useState<{
+    boxId: string;
+    centerX: number;
+    top: number;
+  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    boxId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  // The latest AI check (summary and issues), saved separately from the plan itself.
+  const [planCheck, setPlanCheck] = useState<PlanCheck | null>(() =>
+    loadPlanCheck(planId, new Set(saved?.nodes.map((node) => node.id))),
+  );
+  useEffect(() => savePlanCheck(planId, planCheck), [planId, planCheck]);
+  // Whether the results panel is showing; it opens after each check and can be closed and reopened.
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const { screenToFlowPosition, getNodes, fitView, deleteElements } =
+    useReactFlow();
+  const viewportRef = useRef<Viewport>(
+    saved?.viewport ?? { x: 0, y: 0, zoom: 1 },
+  );
 
   // Autosave shortly after the last change, so a drag doesn't write on every pixel.
   const save = useCallback(
-    () => savePlan(planId, { nodes, edges, rules, viewport: viewportRef.current }),
+    () =>
+      savePlan(planId, { nodes, edges, rules, viewport: viewportRef.current }),
     [planId, nodes, edges, rules],
-  )
+  );
   useEffect(() => {
-    const timer = setTimeout(save, SAVE_DELAY_MS)
-    return () => clearTimeout(timer)
-  }, [save])
+    const timer = setTimeout(save, SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [save]);
 
   const handleMoveEnd = (_event: unknown, viewport: Viewport) => {
-    viewportRef.current = viewport
-    save()
-  }
+    viewportRef.current = viewport;
+    save();
+  };
 
-  // Selected edges turn blue; every other edge gets the grey look back explicitly.
+  // Selected edges turn blue and arrows the AI added are orange and dashed; every other edge gets
+  // the grey look back explicitly.
+  const suggestedIds = useMemo(
+    () =>
+      new Set(
+        nodes.filter((node) => node.data.suggested).map((node) => node.id),
+      ),
+    [nodes],
+  );
+  // An arrow is the AI's while either end is a dashed box; keeping the box makes it a normal arrow.
+  const isSuggestedEdge = useCallback(
+    (edge: { source: string; target: string }) =>
+      suggestedIds.has(edge.source) || suggestedIds.has(edge.target),
+    [suggestedIds],
+  );
   const displayedEdges = useMemo(
     () =>
       edges.map((edge) => {
-        const color = edge.selected ? SELECTED_EDGE_COLOR : EDGE_COLOR
+        const suggested = isSuggestedEdge(edge);
+        const color = edge.selected
+          ? SELECTED_EDGE_COLOR
+          : suggested
+            ? SUGGESTED_EDGE_COLOR
+            : EDGE_COLOR;
         return {
           ...edge,
           markerEnd: { type: MarkerType.ArrowClosed, color },
-          style: { strokeWidth: 2, stroke: color },
-        }
+          style: {
+            strokeWidth: 2,
+            stroke: color,
+            ...(suggested ? { strokeDasharray: "6 4" } : {}),
+          },
+        };
       }),
-    [edges],
-  )
+    [edges, isSuggestedEdge],
+  );
+
+  // What the AI added and the user hasn't kept yet, for the note at the bottom of the canvas.
+  const suggestedBoxes = nodes.filter((node) => node.data.suggested);
+  const suggestedArrowCount = edges.filter(isSuggestedEdge).length;
+  // The note shows for a few seconds after a check, not for as long as dashed boxes remain.
+  const [noteOpen, setNoteOpen] = useState(false);
+  useEffect(() => {
+    if (!noteOpen) return;
+    const timer = setTimeout(() => setNoteOpen(false), NOTE_SECONDS * 1000);
+    return () => clearTimeout(timer);
+  }, [noteOpen]);
 
   const addNodeAt = (position: XYPosition) => {
     setNodes((current) => [
       ...current,
       {
         id: crypto.randomUUID(),
-        type: 'block',
+        type: "block",
         position,
         origin: [0.5, 0.5], // position the node by its center
         // Approximate size so the node is visible (and can take focus) before React Flow measures it
         initialWidth: 128,
         initialHeight: 24,
-        data: { title: '', description: '', editing: true },
+        data: { title: "", description: "", editing: true },
       },
-    ])
-  }
+    ]);
+  };
 
   const addNodeAtCursor = (event: MouseEvent) => {
-    addNodeAt(screenToFlowPosition({ x: event.clientX, y: event.clientY }))
-  }
+    addNodeAt(screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+  };
 
   // "+ Box" drops a box in the middle of what is visible, nudged down past any box already there.
-  const frameRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLDivElement>(null);
   const addNodeInView = () => {
-    const rect = frameRef.current?.getBoundingClientRect()
-    if (!rect) return
+    const rect = frameRef.current?.getBoundingClientRect();
+    if (!rect) return;
     const center = screenToFlowPosition({
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2,
-    })
-    let y = center.y
-    while (nodes.some((node) => node.position.x === center.x && node.position.y === y)) y += 48
-    addNodeAt({ x: center.x, y })
-  }
+    });
+    let y = center.y;
+    while (
+      nodes.some(
+        (node) => node.position.x === center.x && node.position.y === y,
+      )
+    )
+      y += 48;
+    addNodeAt({ x: center.x, y });
+  };
 
-  const [checking, setChecking] = useState(false)
-  const [checkError, setCheckError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   // Saves right away first, so the AI sees the latest edits rather than the last autosave.
+  // The AI's suggestions are added as boxes (with arrows) marked "suggested"; suggestions from an
+  // earlier check that weren't kept are replaced.
   const checkWithAI = async () => {
-    save()
-    setChecking(true)
-    setCheckError(null)
+    save();
+    setChecking(true);
+    setCheckError(null);
     try {
-      const result = await sendPlanToAI(planId)
-      // TODO: show this in the UI (e.g. on the Build page).
-      console.log('AI response:', result)
-    } catch (err) {
-      setCheckError(err instanceof Error ? err.message : 'Something went wrong.')
-    } finally {
-      setChecking(false)
-    }
-  }
+      const review = await checkPlan(planId);
+      // Read the boxes now, not from before the request: the user may have edited while waiting.
+      const current = getNodes() as BlockNodeType[];
+      const kept = current.filter((node) => !node.data.suggested);
+      const replaced = new Set(
+        current.filter((node) => node.data.suggested).map((node) => node.id),
+      );
+      const added = suggestionsToElements(review.suggestions, kept);
 
-  // Deleting a box (toolbar button or keyboard) also deletes its rules.
+      setNodes([...kept, ...added.nodes]);
+      setEdges((existing) => [
+        ...existing.filter(
+          (edge) => !replaced.has(edge.source) && !replaced.has(edge.target),
+        ),
+        ...added.edges,
+      ]);
+      setRules((existing) => removeRulesForBoxes(existing, [...replaced]));
+      setRuleCard((card) => (card && replaced.has(card.boxId) ? null : card));
+      setPlanCheck({
+        checkedAt: Date.now(),
+        summary: review.summary,
+        issues: cleanIssues(review.issues, new Set(kept.map((node) => node.id))),
+      });
+      setResultsOpen(true);
+      setNoteOpen(true);
+    } catch (err) {
+      setCheckError(
+        err instanceof Error ? err.message : "Something went wrong.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // Clicking an issue in the results selects its box and brings it into view.
+  const selectBox = (boxId: string) => {
+    setNodes((current) =>
+      current.map((node) => ({ ...node, selected: node.id === boxId })),
+    );
+    fitView({ nodes: [{ id: boxId }], duration: 300, maxZoom: 1.2 });
+  };
+
+  // Deleting a box (toolbar button or keyboard) also deletes its rules and the issues about it.
   const handleNodesDelete = (deleted: BlockNodeType[]) => {
+    setPlanCheck((check) =>
+      check
+        ? removeIssuesForBoxes(
+            check,
+            deleted.map((node) => node.id),
+          )
+        : check,
+    );
     setRuleCard((current) =>
-      current && deleted.some((node) => node.id === current.boxId) ? null : current,
-    )
+      current && deleted.some((node) => node.id === current.boxId)
+        ? null
+        : current,
+    );
     setRules((current) =>
       removeRulesForBoxes(
         current,
         deleted.map((node) => node.id),
       ),
-    )
-  }
+    );
+  };
 
   // The card opens just below the box, centered on it, from the box's on-screen rect.
   const openRuleCard = useCallback((boxId: string) => {
     const element = frameRef.current?.querySelector(
       `.react-flow__node[data-id="${CSS.escape(boxId)}"]`,
-    )
-    const rect = element?.getBoundingClientRect()
-    if (!rect) return
-    setContextMenu(null)
-    setRuleCard({ boxId, centerX: rect.left + rect.width / 2, top: rect.bottom + 8 })
-  }, [])
+    );
+    const rect = element?.getBoundingClientRect();
+    if (!rect) return;
+    setContextMenu(null);
+    setRuleCard({
+      boxId,
+      centerX: rect.left + rect.width / 2,
+      top: rect.bottom + 8,
+    });
+  }, []);
 
   const closeRuleCard = useCallback(
     ({ restoreFocus }: { restoreFocus: boolean }) => {
-      const boxId = ruleCard?.boxId
-      setRuleCard(null)
-      if (!restoreFocus || !boxId) return
+      const boxId = ruleCard?.boxId;
+      setRuleCard(null);
+      if (!restoreFocus || !boxId) return;
       requestAnimationFrame(() =>
         frameRef.current
-          ?.querySelector<HTMLElement>(`[data-rules-corner="${CSS.escape(boxId)}"]`)
+          ?.querySelector<HTMLElement>(
+            `[data-rules-corner="${CSS.escape(boxId)}"]`,
+          )
           ?.focus(),
-      )
+      );
     },
     [ruleCard?.boxId],
-  )
+  );
 
   const toggleRuleCard = (boxId: string) => {
-    if (ruleCard?.boxId === boxId) closeRuleCard({ restoreFocus: false })
-    else openRuleCard(boxId)
-  }
+    if (ruleCard?.boxId === boxId) closeRuleCard({ restoreFocus: false });
+    else openRuleCard(boxId);
+  };
 
   const deleteRuleFromCard = (ruleId: string) => {
-    if (!ruleCard) return
-    const remaining = deleteRule(rules, ruleId)
-    setRules(remaining)
+    if (!ruleCard) return;
+    const remaining = deleteRule(rules, ruleId);
+    setRules(remaining);
     // Deleting a box's last rule removes its corner, so the card closes with it.
-    if (rulesForBox(remaining, ruleCard.boxId).length === 0) setRuleCard(null)
-  }
+    if (rulesForBox(remaining, ruleCard.boxId).length === 0) setRuleCard(null);
+  };
 
   // "+ Rule" lists the boxes that already have a name, so the user picks which one the rule is for.
   const namedBoxes = nodes
-    .filter((node) => node.data.title.trim() !== '')
-    .map((node) => ({ id: node.id, name: node.data.title }))
+    .filter((node) => node.data.title.trim() !== "")
+    .map((node) => ({ id: node.id, name: node.data.title }));
 
   // A new edge opens its description field right away, like a new block does.
   const connect = (connection: Connection) => {
     const edge: LabeledEdgeType = {
       ...connection,
       id: crypto.randomUUID(),
-      data: { label: '', editing: true },
-    }
-    setEdges((current) => addEdge(edge, current))
-  }
+      data: { label: "", editing: true },
+    };
+    setEdges((current) => addEdge(edge, current));
+  };
 
   return (
-    <div className="flex size-full flex-col gap-3">
-      <CanvasToolbar
-        boxes={namedBoxes}
-        onPickRuleBox={openRuleCard}
-        onAddBox={addNodeInView}
-        onCheck={checkWithAI}
-        checking={checking}
-        checkError={checkError}
-      />
-
+    <div className="size-full">
       <div
         ref={frameRef}
-        className="bg-dot-grid relative min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-200"
+        className="bg-dot-grid relative size-full overflow-hidden rounded-xl border border-gray-200"
       >
+        <CanvasToolbar
+          boxes={namedBoxes}
+          onPickRuleBox={openRuleCard}
+          onAddBox={addNodeInView}
+          onCheck={checkWithAI}
+          checking={checking}
+          checkError={checkError}
+        />
+
         <RulesContext.Provider value={{ rules, openRuleCard, toggleRuleCard }}>
+          <IssuesContext.Provider
+            value={{
+              issues: planCheck?.issues ?? [],
+              openResults: () => setResultsOpen(true),
+            }}
+          >
           <ReactFlow
             nodes={nodes}
             edges={displayedEdges}
@@ -241,18 +374,42 @@ function Canvas({ planId }: { planId: string }) {
             onMoveEnd={handleMoveEnd}
             // Panning, zooming or dragging a box would leave the card or menu behind, so close them.
             onMoveStart={() => {
-              setRuleCard(null)
-              setContextMenu(null)
+              setRuleCard(null);
+              setContextMenu(null);
             }}
             onNodeDragStart={() => setRuleCard(null)}
             onNodeContextMenu={(event, node) => {
-              event.preventDefault()
-              if (node.data.title.trim() === '') return
-              setRuleCard(null)
-              setContextMenu({ boxId: node.id, x: event.clientX, y: event.clientY })
+              event.preventDefault();
+              if (node.data.title.trim() === "") return;
+              setRuleCard(null);
+              setContextMenu({
+                boxId: node.id,
+                x: event.clientX,
+                y: event.clientY,
+              });
             }}
           />
+          </IssuesContext.Provider>
         </RulesContext.Provider>
+
+        {planCheck && resultsOpen && (
+          <CheckResultsPanel
+            check={planCheck}
+            boxNames={new Map(nodes.map((node) => [node.id, node.data.title]))}
+            suggestedCount={suggestedBoxes.length}
+            onSelectBox={selectBox}
+            onClose={() => setResultsOpen(false)}
+          />
+        )}
+        {planCheck && !resultsOpen && (
+          <button
+            type="button"
+            onClick={() => setResultsOpen(true)}
+            className="absolute top-3 right-3 z-10 rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-ink shadow-lg transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          >
+            AI results
+          </button>
+        )}
 
         {contextMenu && (
           <RuleContextMenu
@@ -266,15 +423,47 @@ function Canvas({ planId }: { planId: string }) {
         {ruleCard && (
           <RulesCard
             key={ruleCard.boxId}
-            boxName={nodes.find((node) => node.id === ruleCard.boxId)?.data.title ?? ''}
+            boxName={
+              nodes.find((node) => node.id === ruleCard.boxId)?.data.title ?? ""
+            }
             rules={rulesForBox(rules, ruleCard.boxId)}
             centerX={ruleCard.centerX}
             top={ruleCard.top}
-            onAdd={(text) => setRules((current) => addRule(current, ruleCard.boxId, text))}
-            onUpdate={(ruleId, text) => setRules((current) => updateRule(current, ruleId, text))}
+            onAdd={(text) =>
+              setRules((current) => addRule(current, ruleCard.boxId, text))
+            }
+            onUpdate={(ruleId, text) =>
+              setRules((current) => updateRule(current, ruleId, text))
+            }
             onDelete={deleteRuleFromCard}
             onClose={closeRuleCard}
           />
+        )}
+
+        {noteOpen && suggestedBoxes.length > 0 && (
+          <div
+            role="status"
+            className="absolute bottom-4 left-1/2 z-10 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-4 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-lg"
+          >
+            <span>
+              AI added {suggestedBoxes.length}{" "}
+              {suggestedBoxes.length === 1 ? "box" : "boxes"} and{" "}
+              {suggestedArrowCount}{" "}
+              {suggestedArrowCount === 1 ? "arrow" : "arrows"}. Click a dashed
+              box to see why.
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                deleteElements({
+                  nodes: suggestedBoxes.map((node) => ({ id: node.id })),
+                })
+              }
+              className="shrink-0 font-semibold text-blue-200 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            >
+              Undo all
+            </button>
+          </div>
         )}
 
         {nodes.length === 0 && (
@@ -284,13 +473,17 @@ function Canvas({ planId }: { planId: string }) {
         )}
       </div>
     </div>
-  )
+  );
 }
 
-export default function BlueprintCanvas({ planId = DEFAULT_PLAN_ID }: { planId?: string }) {
+export default function BlueprintCanvas({
+  planId = DEFAULT_PLAN_ID,
+}: {
+  planId?: string;
+}) {
   return (
     <ReactFlowProvider>
       <Canvas planId={planId} />
     </ReactFlowProvider>
-  )
+  );
 }

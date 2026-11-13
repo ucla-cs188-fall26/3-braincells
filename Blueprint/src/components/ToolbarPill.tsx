@@ -5,6 +5,7 @@ export type ToolbarAction = {
   Icon: ComponentType<SVGProps<SVGSVGElement>>
   onClick?: () => void // some actions are placeholders for now
   danger?: boolean
+  active?: boolean
 }
 
 const SIZES = {
@@ -33,17 +34,18 @@ export default function ToolbarPill({ actions, size = 'md' }: ToolbarPillProps) 
       <div
         className={`flex items-center gap-1 border border-gray-200 bg-white shadow-lg ${style.pill}`}
       >
-        {actions.map(({ label, Icon, onClick, danger }) => (
+        {actions.map(({ label, Icon, onClick, danger, active }) => (
           <div key={label} className="flex items-center gap-1">
             {danger && <div className={`mr-1 w-px bg-gray-300 ${style.divider}`} />}
             <button
               type="button"
               aria-label={label}
+              aria-pressed={active}
               onClick={onClick}
               onMouseEnter={() => setActiveLabel(label)}
               onFocus={() => setActiveLabel(label)}
               onBlur={() => setActiveLabel(null)}
-              className={`flex items-center justify-center transition-colors hover:bg-gray-100 ${style.button} ${
+              className={`flex items-center justify-center transition-colors ${active ? 'bg-blue-100' : 'hover:bg-gray-100'} ${style.button} ${
                 danger ? 'text-red-700' : 'text-ink'
               }`}
             >
