@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router'
-import CodeViewer, { type LineHighlight } from '../components/CodeViewer'
+import CodeViewer, { type LineHighlight, type LineLabel } from '../components/CodeViewer'
 import ExplanationCard, { type Explanation } from '../components/ExplanationCard'
-import OutroDialog from '../components/OutroDialog'
 import PlanDiagram from '../components/PlanDiagram'
 import type { BuildPayload } from '../lib/buildPayload'
 import { currentPayload, useBuild } from '../lib/buildStore'
 import type { CodeSource, GeneratedFile } from '../lib/generateCode'
-import { hasSeenOutro, markOutroSeen } from '../lib/onboarding'
 import { DEFAULT_PLAN_ID, loadPlan, type PlanState } from '../lib/planStorage'
 import {
   boxAtLine,
@@ -38,8 +36,6 @@ const DEFAULT_EXPLANATION: Explanation = {
   heading: 'Click a box to see its code',
   body: 'Each box on the left is linked to lines on the right.',
 }
-
-const OUTRO_DELAY_MS = 900 // long enough to read the explanation first
 
 // What a file is for, in plan words: "the task list", or the whole app for App.jsx.
 function filePurpose(payload: BuildPayload, file: GeneratedFile): string {
@@ -155,16 +151,38 @@ function lineFocus(payload: BuildPayload, { source, ownerBoxId }: LineSelection)
   return { boxIds: new Set(boxId ? [boxId] : []), arrowId: null }
 }
 
-// For a box: its whole block in light blue, with its rule lines in yellow.
-function boxHighlights(trace: BoxTrace | null, activeFile: string): Map<number, LineHighlight> {
-  const highlights = new Map<number, LineHighlight>()
-  if (!trace) return highlights
-  if (trace.file === activeFile) {
-    for (let line = trace.lines.start; line <= trace.lines.end; line++) highlights.set(line, 'box')
+type CodeMarks = { highlights: Map<number, LineHighlight>; labels: Map<number, LineLabel> }
+const noMarks = (): CodeMarks => ({ highlights: new Map(), labels: new Map() })
+
+// For a box: every block of its code in the open file is tinted light blue and labeled with the
+// box's name (a box can have several, e.g. its screen and the place App.jsx shows it). Its rule
+// lines are yellow, labeled with the rule.
+function boxMarks(file: GeneratedFile, boxId: string, boxName: string, trace: BoxTrace | null): CodeMarks {
+  const marks = noMarks()
+  const blocks = file.sources.filter((source) => source.kind === 'box' && source.id === boxId)
+  for (const block of blocks) {
+    for (let line = block.lines.start; line <= block.lines.end; line++) marks.highlights.set(line, 'box')
+    // A block inside a bigger block of the same box is already covered by that block's label.
+    const nested = blocks.some(
+      (other) =>
+        other !== block &&
+        other.lines.start <= block.lines.start &&
+        other.lines.end >= block.lines.end &&
+        other.lines.end - other.lines.start > block.lines.end - block.lines.start,
+    )
+    if (!nested) marks.labels.set(block.lines.start, { text: boxName, tone: 'box' })
   }
-  for (const rule of trace.rules) if (rule.file === activeFile) highlights.set(rule.line, 'rule')
-  return highlights
+  for (const rule of trace?.rules ?? []) {
+    if (rule.file !== file.name) continue
+    marks.highlights.set(rule.line, 'rule')
+    marks.labels.set(rule.line, { text: `Rule: ${rule.rule.text}`, tone: 'rule' })
+  }
+  return marks
 }
+
+// The files that hold any code for a box, so their tabs can point the way.
+const filesForBox = (files: GeneratedFile[], boxId: string) =>
+  new Set(files.filter((file) => file.boxIds.includes(boxId)).map((file) => file.name))
 
 // For a clicked line: only its own block, in the stronger blue. The file's rule lines stay yellow.
 function lineHighlights(file: GeneratedFile, { source }: LineSelection): Map<number, LineHighlight> {
@@ -198,22 +216,8 @@ function Understand({ files }: { files: GeneratedFile[] }) {
   )
   const clear = useCallback(() => setSelection(null), [])
 
-  // The outro waits a moment after the first line traced back to the plan, then shows once.
-  const [outro, setOutro] = useState<'waiting' | 'pending' | 'open' | 'done'>(() =>
-    hasSeenOutro() ? 'done' : 'waiting',
-  )
-  useEffect(() => {
-    if (outro !== 'pending') return
-    const timer = setTimeout(() => setOutro('open'), OUTRO_DELAY_MS)
-    return () => clearTimeout(timer)
-  }, [outro])
-
   const selectLine = (line: number) => {
     const source = traceLine(openFile, line)
-    if (source && outro === 'waiting') {
-      markOutroSeen()
-      setOutro('pending')
-    }
     setSelection({
       kind: 'line',
       file: openFile.name,
@@ -228,7 +232,7 @@ function Understand({ files }: { files: GeneratedFile[] }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="menu"], dialog')) return
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="menu"]')) return
       setSelection(null)
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -248,13 +252,19 @@ function Understand({ files }: { files: GeneratedFile[] }) {
       : selection?.kind === 'line'
         ? explainLine(payload, files.find((f) => f.name === selection.file) ?? openFile, selection)
         : DEFAULT_EXPLANATION
+  const markedFiles = useMemo(
+    () => (selection?.kind === 'box' ? filesForBox(files, selection.boxId) : new Set<string>()),
+    [selection, files],
+  )
+  const boxName =
+    selection?.kind === 'box' ? (payload.boxes.find((box) => box.id === selection.boxId)?.name ?? '') : ''
   // A line selection only tints its own file; switching tabs shows the other files plain.
-  const highlights =
+  const marks: CodeMarks =
     selection?.kind === 'box'
-      ? boxHighlights(selection.trace, openFile.name)
+      ? boxMarks(openFile, selection.boxId, boxName, selection.trace)
       : lineInView
-        ? lineHighlights(openFile, lineInView)
-        : new Map<number, LineHighlight>()
+        ? { highlights: lineHighlights(openFile, lineInView), labels: new Map() }
+        : noMarks()
 
   return (
     <main className="grid min-h-0 flex-1 grid-cols-2 gap-6 bg-canvas p-6">
@@ -274,12 +284,13 @@ function Understand({ files }: { files: GeneratedFile[] }) {
         files={files}
         activeFile={openFile.name}
         onSelectFile={setActiveFile}
-        highlights={highlights}
+        highlights={marks.highlights}
+        labels={marks.labels}
+        markedFiles={markedFiles}
         scrollTarget={scrollTarget}
         selectedLine={lineInView?.line ?? null}
         onLineClick={selectLine}
       />
-      {outro === 'open' && <OutroDialog onClose={() => setOutro('done')} />}
     </main>
   )
 }
