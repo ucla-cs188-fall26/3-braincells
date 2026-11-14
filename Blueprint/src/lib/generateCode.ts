@@ -4,8 +4,16 @@ import type { BuildPayload, PayloadArrow, PayloadBox, PayloadRule } from './buil
 export type LineRange = { start: number; end: number }
 
 // "These lines came from this box / arrow / rule". The Understand step uses this to link
-// the plan to the code, e.g. Task storage → storage.js lines 1–12.
-export type CodeSource = { kind: 'box' | 'arrow' | 'rule'; id: string; lines: LineRange }
+// the plan to the code both ways, e.g. Task storage → storage.js lines 1–12. A real AI response
+// should fill the same shape: the plain-language summary and debugHint are optional.
+export type CodeSource = {
+  kind: 'box' | 'arrow' | 'rule'
+  id: string // the box, arrow or rule id from the plan
+  lines: LineRange
+  summary?: string // what these lines do, in plain words
+  debugHint?: string // "If X goes wrong, start here."
+}
+type SourceNotes = Pick<CodeSource, 'summary' | 'debugHint'>
 
 export type GeneratedFile = {
   name: string
@@ -160,7 +168,11 @@ function writeFiles(payload: BuildPayload): GeneratedFile[] {
     if ('ident' in item) {
       files.push(writeComponent(item, storageLinks(item.box.id), transitions.get(item.box.id) ?? [], arrows, linked))
     } else {
-      files.push(writeStorage(item, payload.name))
+      const id = item.box.id
+      const users = arrows.filter(
+        (a) => (a.from === id && components.has(a.to)) || (a.to === id && components.has(a.from)),
+      )
+      files.push(writeStorage(item, payload.name, users))
     }
   }
   files.push(writeApp([...components.values()], transitions, arrows, linked))
@@ -175,10 +187,10 @@ function createWriter() {
       lines.push(text)
     },
     // Records every line written inside fn as coming from that box, arrow or rule.
-    from(kind: CodeSource['kind'], id: string, fn: () => void) {
+    from(kind: CodeSource['kind'], id: string, fn: () => void, notes: SourceNotes = {}) {
       const start = lines.length + 1
       fn()
-      if (lines.length >= start) sources.push({ kind, id, lines: { start, end: lines.length } })
+      if (lines.length >= start) sources.push({ kind, id, lines: { start, end: lines.length }, ...notes })
     },
     finish(name: string): GeneratedFile {
       const ids = (kind: CodeSource['kind']) => [
@@ -205,32 +217,92 @@ const heading = (box: PayloadBox) => `// ${box.name}${box.description ? `: ${box
 const requiredField = (rule: PayloadRule) =>
   rule.text.match(/\bneeds?\s+(?:a|an|the)?\s*([A-Za-z]+)/i)?.[1]?.toLowerCase() ?? null
 
+// The rule maps to the one line that enforces it (or to its comment when it can't be checked).
 function writeRuleCheck(out: Writer, rule: PayloadRule, value: string, onFail: string, indent: string) {
-  out.from('rule', rule.id, () => {
-    out.line(`${indent}// Rule: ${rule.text}`)
-    const field = requiredField(rule)
-    if (field) out.line(`${indent}if (!${value}.${field}?.toString().trim()) ${onFail}`)
-  })
+  const field = requiredField(rule)
+  const notes = {
+    summary: `Checks your rule: ${rule.text}`,
+    debugHint: field
+      ? `If something without a ${field} gets through, start here.`
+      : 'If this rule is not being followed, start here.',
+  }
+  if (!field) return out.from('rule', rule.id, () => out.line(`${indent}// Rule: ${rule.text}`), notes)
+  out.line(`${indent}// Rule: ${rule.text}`)
+  out.from('rule', rule.id, () => out.line(`${indent}if (!${value}.${field}?.toString().trim()) ${onFail}`), notes)
 }
 
-function writeStorage(module: StorageModule, planName: string): GeneratedFile {
+// Records fn's lines once for each arrow (the same code can serve several arrows).
+function fromArrows(out: Writer, arrows: PayloadArrow[], fn: () => void, notes: (arrow: PayloadArrow) => SourceNotes) {
+  if (arrows.length === 0) return fn()
+  const [first, ...rest] = arrows
+  out.from('arrow', first.id, () => fromArrows(out, rest, fn, notes), notes(first))
+}
+
+const arrowSummary = (arrow: PayloadArrow) =>
+  `${arrow.label ? `The "${arrow.label}" arrow` : 'The arrow'} from ${arrow.fromName} to ${arrow.toName}`
+
+const lower = (text: string) => text.toLowerCase()
+
+const boxNotesFor = (box: PayloadBox): SourceNotes => ({
+  summary: box.description || `Shows the ${lower(box.name)}.`,
+  debugHint: `If something on the ${lower(box.name)} looks wrong, start here.`,
+})
+const storageUseNotes = (arrow: PayloadArrow, user: PayloadBox, module: StorageModule): SourceNotes => ({
+  summary: arrowSummary(arrow),
+  debugHint: `If the ${lower(user.name)} shows the wrong ${lower(module.load.slice(4))}, start here.`,
+})
+const transitionNotes = (arrow: PayloadArrow): SourceNotes => ({
+  summary: arrowSummary(arrow),
+  debugHint: `If you don't get to the ${lower(arrow.toName)} when you should, start here.`,
+})
+
+function writeStorage(module: StorageModule, planName: string, links: PayloadArrow[]): GeneratedFile {
   const out = createWriter()
-  const key = `${words(planName).join('-').toLowerCase() || 'app'}:${module.load.slice(4).toLowerCase()}`
-  out.from('box', module.box.id, () => {
-    out.line(heading(module.box))
-    out.line(`const KEY = '${key}'`)
-    out.line()
-    out.line(`export function ${module.load}() {`)
-    out.line(`  return JSON.parse(localStorage.getItem(KEY) ?? '[]')`)
-    out.line('}')
-    out.line()
-    out.line(`export function ${module.save}(item) {`)
-    for (const rule of module.rules) {
-      writeRuleCheck(out, rule, 'item', `throw new Error(${JSON.stringify(rule.text)})`, '  ')
-    }
-    out.line(`  localStorage.setItem(KEY, JSON.stringify([...${module.load}(), item]))`)
-    out.line('}')
+  const things = module.load.slice(4).toLowerCase()
+  // load/save are what the arrows to this box mean ("save, load"), so they map to those arrows too.
+  const arrowNotes = (arrow: PayloadArrow) => ({
+    summary: arrowSummary(arrow),
+    debugHint: `If the ${things} shown or saved look wrong, start here.`,
   })
+  const key = `${words(planName).join('-').toLowerCase() || 'app'}:${module.load.slice(4).toLowerCase()}`
+  const boxNotes = {
+    summary: module.box.description || `Keeps the ${things} saved in the browser.`,
+    debugHint: `If saved ${things} go missing after a reload, start here.`,
+  }
+  out.from(
+    'box',
+    module.box.id,
+    () => {
+      out.line(heading(module.box))
+      out.line(`const KEY = '${key}'`)
+      out.line()
+      fromArrows(
+        out,
+        links,
+        () => {
+          out.line(`export function ${module.load}() {`)
+          out.line(`  return JSON.parse(localStorage.getItem(KEY) ?? '[]')`)
+          out.line('}')
+        },
+        arrowNotes,
+      )
+      out.line()
+      fromArrows(
+        out,
+        links,
+        () => {
+          out.line(`export function ${module.save}(item) {`)
+          for (const rule of module.rules) {
+            writeRuleCheck(out, rule, 'item', `throw new Error(${JSON.stringify(rule.text)})`, '  ')
+          }
+          out.line(`  localStorage.setItem(KEY, JSON.stringify([...${module.load}(), item]))`)
+          out.line('}')
+        },
+        arrowNotes,
+      )
+    },
+    boxNotes,
+  )
   return out.finish(module.file)
 }
 
@@ -251,8 +323,11 @@ function writeComponent(
   out.line(`import { useState } from 'react'`)
   for (const { arrow, module } of links) {
     linked.add(arrow.id)
-    out.from('arrow', arrow.id, () =>
-      out.line(`import { ${module.load}, ${module.save} } from './${module.file.replace(/\.js$/, '')}'`),
+    out.from(
+      'arrow',
+      arrow.id,
+      () => out.line(`import { ${module.load}, ${module.save} } from './${module.file.replace(/\.js$/, '')}'`),
+      storageUseNotes(arrow, box, module),
     )
   }
   out.line()
@@ -262,8 +337,9 @@ function writeComponent(
     out.line(`export default function ${component.ident}(${props.length ? `{ ${props.join(', ')} }` : ''}) {`)
     if (!isAuth) {
       const initial = store ? `() => ${store.load}()` : '[]'
-      if (store) out.from('arrow', links[0].arrow.id, () => out.line(`  const [items, setItems] = useState(${initial})`))
-      else out.line(`  const [items, setItems] = useState(${initial})`)
+      const line = `  const [items, setItems] = useState(${initial})`
+      if (store) out.from('arrow', links[0].arrow.id, () => out.line(line), storageUseNotes(links[0].arrow, box, store))
+      else out.line(line)
     }
     out.line(`  const [draft, setDraft] = useState('')`)
     out.line()
@@ -272,12 +348,13 @@ function writeComponent(
     out.line(`    const item = { ${field}: draft.trim() }`)
     for (const rule of component.rules) writeRuleCheck(out, rule, 'item', 'return', '    ')
     for (const { arrow, module } of links) {
-      out.from('arrow', arrow.id, () => out.line(`    ${module.save}(item)`))
+      out.from('arrow', arrow.id, () => out.line(`    ${module.save}(item)`), storageUseNotes(arrow, box, module))
     }
     if (!isAuth) out.line(store ? `    setItems(${store.load}())` : '    setItems([...items, item])')
     out.line(`    setDraft('')`)
     if (isAuth && transitions[0]) {
-      out.from('arrow', transitions[0].arrow.id, () => out.line(`    ${transitions[0].prop}(item)`))
+      const { arrow, prop } = transitions[0]
+      out.from('arrow', arrow.id, () => out.line(`    ${prop}(item)`), transitionNotes(arrow))
     }
     out.line('  }')
     out.line()
@@ -300,20 +377,28 @@ function writeComponent(
         const arrow = arrows.find((a) => a.from === folded.id && a.to === box.id)
         if (arrow) {
           linked.add(arrow.id)
-          out.from('arrow', arrow.id, () => out.line(`      <${pascal(folded.name) || 'Part'} items={${isAuth ? '[]' : 'items'}} />`))
+          out.from(
+            'arrow',
+            arrow.id,
+            () => out.line(`      <${pascal(folded.name) || 'Part'} items={${isAuth ? '[]' : 'items'}} />`),
+            { summary: arrowSummary(arrow), debugHint: `If ${folded.name} doesn't show up on the ${lower(box.name)}, start here.` },
+          )
         }
-      })
+      }, boxNotesFor(folded))
     }
     for (const [index, { arrow, prop }] of transitions.entries()) {
       if (isAuth && index === 0) continue
-      out.from('arrow', arrow.id, () =>
-        out.line(`      <button type="button" onClick={${prop}}>${arrow.label || arrow.toName}</button>`),
+      out.from(
+        'arrow',
+        arrow.id,
+        () => out.line(`      <button type="button" onClick={${prop}}>${arrow.label || arrow.toName}</button>`),
+        transitionNotes(arrow),
       )
     }
     out.line('    </section>')
     out.line('  )')
     out.line('}')
-  })
+  }, boxNotesFor(box))
 
   for (const folded of component.folded) {
     out.line()
@@ -323,10 +408,15 @@ function writeComponent(
       out.line(`function ${name}({ items }) {`)
       out.line(`  return <p>${folded.name}: {items.length}</p>`)
       out.line('}')
-    })
+    }, boxNotesFor(folded))
   }
   return out.finish(component.file)
 }
+
+const screenNotes = ({ box }: Component): SourceNotes => ({
+  summary: `Decides when the ${lower(box.name)} is on screen.`,
+  debugHint: `If the ${lower(box.name)} shows up at the wrong time, start here.`,
+})
 
 function writeApp(
   components: Component[],
@@ -341,7 +431,7 @@ function writeApp(
 
   out.line(`import { useState } from 'react'`)
   for (const component of components) {
-    out.from('box', component.box.id, () => out.line(`import ${component.ident} from './${component.ident}'`))
+    out.from('box', component.box.id, () => out.line(`import ${component.ident} from './${component.ident}'`), screenNotes(component))
   }
   out.line()
   out.line('export default function App() {')
@@ -362,13 +452,13 @@ function writeApp(
           for (const { arrow, prop } of list) {
             linked.add(arrow.id)
             const target = components.find((c) => c.box.id === arrow.to)!
-            out.from('arrow', arrow.id, () => out.line(`        ${prop}={() => setScreen('${target.ident}')}`))
+            out.from('arrow', arrow.id, () => out.line(`        ${prop}={() => setScreen('${target.ident}')}`), transitionNotes(arrow))
           }
           out.line('      />')
           out.line('    )')
         }
         out.line('  }')
-      })
+      }, screenNotes(component))
     }
     out.line('  return null')
   }
@@ -380,6 +470,7 @@ function writeApp(
   for (const arrow of leftover) {
     out.from('arrow', arrow.id, () =>
       out.line(`// ${arrow.fromName} → ${arrow.toName}${arrow.label ? ` (${arrow.label})` : ''}`),
+      { summary: `${arrowSummary(arrow)}. The AI only noted it here.` },
     )
   }
   return out.finish('App.jsx')
