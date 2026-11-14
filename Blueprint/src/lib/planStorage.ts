@@ -53,6 +53,36 @@ function cleanEdges(edges: LabeledEdgeType[], nodes: BlockNodeType[]): LabeledEd
     }))
 }
 
+const savedAtKey = (planId: string) => `blueprint:plan-saved-at:${planId}`
+const saveListeners = new Set<(planId: string) => void>()
+
+function markSaved(planId: string) {
+  try {
+    localStorage.setItem(savedAtKey(planId), String(Date.now()))
+  } catch {
+    // The timestamp is only for the "Saved" label; the plan itself is already written.
+  }
+  saveListeners.forEach((listener) => listener(planId))
+}
+
+// Calls the listener after each save that changed the plan or its name. Returns an unsubscribe.
+export function subscribeToPlanSaves(listener: (planId: string) => void) {
+  saveListeners.add(listener)
+  return () => {
+    saveListeners.delete(listener)
+  }
+}
+
+// When the plan or its name last changed (ms since epoch), or null if it never was saved.
+export function loadPlanSavedAt(planId: string): number | null {
+  try {
+    const value = Number(localStorage.getItem(savedAtKey(planId)))
+    return Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
 const boxIds = (nodes: BlockNodeType[]) => new Set(nodes.map((node) => node.id))
 
 export function savePlan(planId: string, { nodes, edges, rules, viewport }: PlanState) {
@@ -65,7 +95,11 @@ export function savePlan(planId: string, { nodes, edges, rules, viewport }: Plan
       rules: cleanRules(rules, boxIds(cleanedNodes)),
       viewport,
     }
-    localStorage.setItem(storageKey(planId), JSON.stringify(payload))
+    const serialized = JSON.stringify(payload)
+    // The canvas also saves when nothing changed (on load, after a pan); only real edits count.
+    if (localStorage.getItem(storageKey(planId)) === serialized) return
+    localStorage.setItem(storageKey(planId), serialized)
+    markSaved(planId)
   } catch {
     // Storage can be full or blocked; losing one autosave is not worth crashing the canvas.
   }
@@ -94,26 +128,6 @@ export function loadPlan(planId: string): PlanState | null {
   }
 }
 
-const codeKey = (planId: string) => `blueprint:plan-code:${planId}`
-
-// The code the AI generated for this plan, or null if none has been generated yet.
-export function loadGeneratedCode(planId: string): string | null {
-  try {
-    return localStorage.getItem(codeKey(planId))
-  } catch {
-    return null
-  }
-}
-
-// Remembers the generated code so the Build page can show it after a reload.
-export function saveGeneratedCode(planId: string, code: string) {
-  try {
-    localStorage.setItem(codeKey(planId), code)
-  } catch {
-    // Same as savePlan: a failed write isn't worth breaking the page.
-  }
-}
-
 const nameKey = (planId: string) => `blueprint:plan-name:${planId}`
 
 export function loadPlanName(planId: string): string {
@@ -126,7 +140,9 @@ export function loadPlanName(planId: string): string {
 
 export function savePlanName(planId: string, name: string) {
   try {
+    if (localStorage.getItem(nameKey(planId)) === name) return
     localStorage.setItem(nameKey(planId), name)
+    markSaved(planId)
   } catch {
     // Same as savePlan: a failed write isn't worth breaking the page.
   }
