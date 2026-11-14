@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router'
 import CodeViewer, { type LineHighlight } from '../components/CodeViewer'
 import ExplanationCard, { type Explanation } from '../components/ExplanationCard'
+import OutroDialog from '../components/OutroDialog'
 import PlanDiagram from '../components/PlanDiagram'
 import type { BuildPayload } from '../lib/buildPayload'
 import { currentPayload, useBuild } from '../lib/buildStore'
 import type { CodeSource, GeneratedFile } from '../lib/generateCode'
+import { hasSeenOutro, markOutroSeen } from '../lib/onboarding'
 import { DEFAULT_PLAN_ID, loadPlan, type PlanState } from '../lib/planStorage'
 import {
   boxAtLine,
@@ -22,7 +24,7 @@ type LineSelection = {
   kind: 'line'
   file: string
   line: number
-  source: CodeSource // the most specific box, arrow or rule the line belongs to
+  source: CodeSource | null // the most specific box, arrow or rule it belongs to; null for setup code
   functionName: string | null
   ownerBoxId: string | null // the box whose code the line sits in
 }
@@ -35,6 +37,22 @@ const DEFAULT_EXPLANATION: Explanation = {
   eyebrow: 'Understand',
   heading: 'Click a box to see its code',
   body: 'Each box on the left is linked to lines on the right.',
+}
+
+const OUTRO_DELAY_MS = 900 // long enough to read the explanation first
+
+// What a file is for, in plan words: "the task list", or the whole app for App.jsx.
+function filePurpose(payload: BuildPayload, file: GeneratedFile): string {
+  if (file.name === 'App.jsx') return 'the whole app, so your screens work together'
+  const main = file.sources
+    .filter((source) => source.kind === 'box')
+    .reduce<CodeSource | null>(
+      (best, source) =>
+        !best || source.lines.end - source.lines.start > best.lines.end - best.lines.start ? source : best,
+      null,
+    )
+  const name = payload.boxes.find((box) => box.id === main?.id)?.name
+  return name ? `the ${name.toLowerCase()}` : 'this file'
 }
 
 const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`)
@@ -73,9 +91,17 @@ function explainBox(plan: PlanState | null, boxId: string, trace: BoxTrace | nul
 }
 
 // Ties a clicked line back to the plan in the user's own words, plus where to look when it breaks.
-function explainLine(payload: BuildPayload, selection: LineSelection): Explanation {
+function explainLine(payload: BuildPayload, file: GeneratedFile, selection: LineSelection): Explanation {
   const { source, line, functionName, ownerBoxId } = selection
   const eyebrow = `Line → box · line ${line}${functionName ? `, ${functionName}` : ''}`
+
+  if (!source) {
+    return {
+      eyebrow,
+      heading: 'Setup code',
+      body: `This line is setup code that supports ${filePurpose(payload, file)}. It isn't tied to one box, arrow or rule in your plan.`,
+    }
+  }
 
   if (source.kind === 'arrow') {
     const arrow = payload.arrows.find((a) => a.id === source.id)
@@ -115,6 +141,8 @@ function explainLine(payload: BuildPayload, selection: LineSelection): Explanati
 }
 
 function lineFocus(payload: BuildPayload, { source, ownerBoxId }: LineSelection): DiagramFocus {
+  // Setup code isn't part of any one box, so nothing in the diagram lights up.
+  if (!source) return { boxIds: new Set(), arrowId: null }
   if (source.kind === 'arrow') {
     const arrow = payload.arrows.find((a) => a.id === source.id)
     if (arrow) return { boxIds: new Set([arrow.from, arrow.to]), arrowId: arrow.id }
@@ -141,7 +169,7 @@ function boxHighlights(trace: BoxTrace | null, activeFile: string): Map<number, 
 // For a clicked line: only its own block, in the stronger blue. The file's rule lines stay yellow.
 function lineHighlights(file: GeneratedFile, { source }: LineSelection): Map<number, LineHighlight> {
   const highlights = new Map<number, LineHighlight>()
-  for (let line = source.lines.start; line <= source.lines.end; line++) highlights.set(line, 'block')
+  if (source) for (let line = source.lines.start; line <= source.lines.end; line++) highlights.set(line, 'block')
   for (const rule of file.sources.filter((s) => s.kind === 'rule')) {
     for (let line = rule.lines.start; line <= rule.lines.end; line++) highlights.set(line, 'rule')
   }
@@ -170,10 +198,22 @@ function Understand({ files }: { files: GeneratedFile[] }) {
   )
   const clear = useCallback(() => setSelection(null), [])
 
+  // The outro waits a moment after the first line traced back to the plan, then shows once.
+  const [outro, setOutro] = useState<'waiting' | 'pending' | 'open' | 'done'>(() =>
+    hasSeenOutro() ? 'done' : 'waiting',
+  )
+  useEffect(() => {
+    if (outro !== 'pending') return
+    const timer = setTimeout(() => setOutro('open'), OUTRO_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [outro])
+
   const selectLine = (line: number) => {
     const source = traceLine(openFile, line)
-    // Setup lines that belong to no box, arrow or rule just clear the selection for now.
-    if (!source) return setSelection(null)
+    if (source && outro === 'waiting') {
+      markOutroSeen()
+      setOutro('pending')
+    }
     setSelection({
       kind: 'line',
       file: openFile.name,
@@ -188,7 +228,7 @@ function Understand({ files }: { files: GeneratedFile[] }) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="menu"]')) return
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="menu"], dialog')) return
       setSelection(null)
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -206,7 +246,7 @@ function Understand({ files }: { files: GeneratedFile[] }) {
     selection?.kind === 'box'
       ? explainBox(plan, selection.boxId, selection.trace)
       : selection?.kind === 'line'
-        ? explainLine(payload, selection)
+        ? explainLine(payload, files.find((f) => f.name === selection.file) ?? openFile, selection)
         : DEFAULT_EXPLANATION
   // A line selection only tints its own file; switching tabs shows the other files plain.
   const highlights =
@@ -239,6 +279,7 @@ function Understand({ files }: { files: GeneratedFile[] }) {
         selectedLine={lineInView?.line ?? null}
         onLineClick={selectLine}
       />
+      {outro === 'open' && <OutroDialog onClose={() => setOutro('done')} />}
     </main>
   )
 }
