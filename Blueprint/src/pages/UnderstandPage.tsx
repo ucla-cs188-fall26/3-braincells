@@ -3,19 +3,46 @@ import { Navigate } from 'react-router'
 import CodeViewer, { type LineHighlight } from '../components/CodeViewer'
 import ExplanationCard, { type Explanation } from '../components/ExplanationCard'
 import PlanDiagram from '../components/PlanDiagram'
+import type { BuildPayload } from '../lib/buildPayload'
 import { currentPayload, useBuild } from '../lib/buildStore'
-import type { GeneratedFile } from '../lib/generateCode'
+import type { CodeSource, GeneratedFile } from '../lib/generateCode'
 import { DEFAULT_PLAN_ID, loadPlan, type PlanState } from '../lib/planStorage'
+import {
+  boxAtLine,
+  describeLines,
+  functionAtLine,
+  quoteRule,
+  traceBox,
+  traceLine,
+  type BoxTrace,
+} from '../lib/trace'
 import { ROUTES } from '../routes'
-import { describeLines, quoteRule, traceBox, type BoxTrace } from '../lib/trace'
 
-type Selection = { kind: 'box'; boxId: string; trace: BoxTrace | null } | null
+type LineSelection = {
+  kind: 'line'
+  file: string
+  line: number
+  source: CodeSource // the most specific box, arrow or rule the line belongs to
+  functionName: string | null
+  ownerBoxId: string | null // the box whose code the line sits in
+}
+type Selection = { kind: 'box'; boxId: string; trace: BoxTrace | null } | LineSelection | null
+
+// What the diagram lights up: boxes get the selected border, one arrow gets darker and thicker.
+type DiagramFocus = { boxIds: Set<string>; arrowId: string | null }
 
 const DEFAULT_EXPLANATION: Explanation = {
   eyebrow: 'Understand',
   heading: 'Click a box to see its code',
   body: 'Each box on the left is linked to lines on the right.',
 }
+
+const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`)
+const joinSentences = (...parts: (string | undefined)[]) =>
+  parts
+    .filter((part): part is string => !!part?.trim())
+    .map(sentence)
+    .join(' ')
 
 function explainBox(plan: PlanState | null, boxId: string, trace: BoxTrace | null): Explanation {
   const box = plan?.nodes.find((node) => node.id === boxId)
@@ -45,7 +72,62 @@ function explainBox(plan: PlanState | null, boxId: string, trace: BoxTrace | nul
   }
 }
 
-// Which lines of the open file to tint for a box: its whole block in blue, rule lines in yellow.
+// Ties a clicked line back to the plan in the user's own words, plus where to look when it breaks.
+function explainLine(payload: BuildPayload, selection: LineSelection): Explanation {
+  const { source, line, functionName, ownerBoxId } = selection
+  const eyebrow = `Line → box · line ${line}${functionName ? `, ${functionName}` : ''}`
+
+  if (source.kind === 'arrow') {
+    const arrow = payload.arrows.find((a) => a.id === source.id)
+    if (arrow) {
+      const heading =
+        ownerBoxId === arrow.to
+          ? `Belongs to ${arrow.toName}, used by ${arrow.fromName}`
+          : ownerBoxId === arrow.from
+            ? `Belongs to ${arrow.fromName}, connects to ${arrow.toName}`
+            : `Connects ${arrow.fromName} and ${arrow.toName}`
+      const which = arrow.label
+        ? `This is the "${arrow.label}" arrow in your plan`
+        : `This is the arrow from ${arrow.fromName} to ${arrow.toName} in your plan`
+      return { eyebrow, heading, body: joinSentences(which, source.debugHint) }
+    }
+  }
+
+  if (source.kind === 'rule') {
+    const rule = payload.rules.find((r) => r.id === source.id)
+    if (rule) {
+      return {
+        eyebrow,
+        heading: `Belongs to ${rule.boxName}`,
+        body: joinSentences(`This line checks a rule you wrote for ${rule.boxName}`, source.debugHint),
+        callouts: [`Your rule ${quoteRule(rule.text)} is enforced on line ${line}.`],
+      }
+    }
+  }
+
+  const boxId = source.kind === 'box' ? source.id : ownerBoxId
+  const name = payload.boxes.find((box) => box.id === boxId)?.name ?? 'your plan'
+  return {
+    eyebrow,
+    heading: `Belongs to ${name}`,
+    body: joinSentences(source.summary, source.debugHint) || `This line is part of ${name}.`,
+  }
+}
+
+function lineFocus(payload: BuildPayload, { source, ownerBoxId }: LineSelection): DiagramFocus {
+  if (source.kind === 'arrow') {
+    const arrow = payload.arrows.find((a) => a.id === source.id)
+    if (arrow) return { boxIds: new Set([arrow.from, arrow.to]), arrowId: arrow.id }
+  }
+  if (source.kind === 'rule') {
+    const rule = payload.rules.find((r) => r.id === source.id)
+    if (rule) return { boxIds: new Set([rule.boxId]), arrowId: null }
+  }
+  const boxId = source.kind === 'box' ? source.id : ownerBoxId
+  return { boxIds: new Set(boxId ? [boxId] : []), arrowId: null }
+}
+
+// For a box: its whole block in light blue, with its rule lines in yellow.
 function boxHighlights(trace: BoxTrace | null, activeFile: string): Map<number, LineHighlight> {
   const highlights = new Map<number, LineHighlight>()
   if (!trace) return highlights
@@ -56,26 +138,51 @@ function boxHighlights(trace: BoxTrace | null, activeFile: string): Map<number, 
   return highlights
 }
 
+// For a clicked line: only its own block, in the stronger blue. The file's rule lines stay yellow.
+function lineHighlights(file: GeneratedFile, { source }: LineSelection): Map<number, LineHighlight> {
+  const highlights = new Map<number, LineHighlight>()
+  for (let line = source.lines.start; line <= source.lines.end; line++) highlights.set(line, 'block')
+  for (const rule of file.sources.filter((s) => s.kind === 'rule')) {
+    for (let line = rule.lines.start; line <= rule.lines.end; line++) highlights.set(line, 'rule')
+  }
+  return highlights
+}
+
 function Understand({ files }: { files: GeneratedFile[] }) {
   // The build is only "done" while it matches the saved plan, so reading the plan once is safe.
   const [plan] = useState(() => loadPlan(DEFAULT_PLAN_ID))
-  const [rules] = useState(() => currentPayload(DEFAULT_PLAN_ID).rules)
+  const [payload] = useState(() => currentPayload(DEFAULT_PLAN_ID))
   const [selection, setSelection] = useState<Selection>(null)
   const [activeFile, setActiveFile] = useState(files[0].name)
   const [scrollTarget, setScrollTarget] = useState<{ line: number } | null>(null)
+  const openFile = files.find((f) => f.name === activeFile) ?? files[0]
 
   const selectBox = useCallback(
     (boxId: string) => {
-      const trace = traceBox(files, boxId, rules)
+      const trace = traceBox(files, boxId, payload.rules)
       setSelection({ kind: 'box', boxId, trace })
       if (trace) {
         setActiveFile(trace.file)
         setScrollTarget({ line: trace.lines.start })
       }
     },
-    [files, rules],
+    [files, payload],
   )
   const clear = useCallback(() => setSelection(null), [])
+
+  const selectLine = (line: number) => {
+    const source = traceLine(openFile, line)
+    // Setup lines that belong to no box, arrow or rule just clear the selection for now.
+    if (!source) return setSelection(null)
+    setSelection({
+      kind: 'line',
+      file: openFile.name,
+      line,
+      source,
+      functionName: functionAtLine(openFile.code, line),
+      ownerBoxId: boxAtLine(openFile, line),
+    })
+  }
 
   // Esc goes back to "nothing selected", unless it's meant for a text field (like renaming).
   useEffect(() => {
@@ -88,24 +195,49 @@ function Understand({ files }: { files: GeneratedFile[] }) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const selectedBoxIds = useMemo(() => new Set(selection ? [selection.boxId] : []), [selection])
-  const explanation = selection ? explainBox(plan, selection.boxId, selection.trace) : DEFAULT_EXPLANATION
-  const highlights = selection ? boxHighlights(selection.trace, activeFile) : new Map<number, LineHighlight>()
+  const focus = useMemo<DiagramFocus>(() => {
+    if (selection?.kind === 'box') return { boxIds: new Set([selection.boxId]), arrowId: null }
+    if (selection?.kind === 'line') return lineFocus(payload, selection)
+    return { boxIds: new Set(), arrowId: null }
+  }, [selection, payload])
+
+  const lineInView = selection?.kind === 'line' && selection.file === openFile.name ? selection : null
+  const explanation =
+    selection?.kind === 'box'
+      ? explainBox(plan, selection.boxId, selection.trace)
+      : selection?.kind === 'line'
+        ? explainLine(payload, selection)
+        : DEFAULT_EXPLANATION
+  // A line selection only tints its own file; switching tabs shows the other files plain.
+  const highlights =
+    selection?.kind === 'box'
+      ? boxHighlights(selection.trace, openFile.name)
+      : lineInView
+        ? lineHighlights(openFile, lineInView)
+        : new Map<number, LineHighlight>()
 
   return (
     <main className="grid min-h-0 flex-1 grid-cols-2 gap-6 bg-canvas p-6">
       <div className="flex min-h-0 flex-col gap-6">
         <section aria-label="Your plan" className="min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <PlanDiagram plan={plan} selectedBoxIds={selectedBoxIds} onSelectBox={selectBox} onClear={clear} />
+          <PlanDiagram
+            plan={plan}
+            selectedBoxIds={focus.boxIds}
+            highlightedArrowId={focus.arrowId}
+            onSelectBox={selectBox}
+            onClear={clear}
+          />
         </section>
         <ExplanationCard {...explanation} />
       </div>
       <CodeViewer
         files={files}
-        activeFile={activeFile}
+        activeFile={openFile.name}
         onSelectFile={setActiveFile}
         highlights={highlights}
         scrollTarget={scrollTarget}
+        selectedLine={lineInView?.line ?? null}
+        onLineClick={selectLine}
       />
     </main>
   )
