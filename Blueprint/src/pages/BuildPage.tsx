@@ -87,6 +87,8 @@ function ResultCard({ planId }: { planId: string }) {
   const navigate = useNavigate()
   const { status, files, total, error } = useBuild(planId)
   const progress = status === 'done' ? 1 : total ? files.length / total : 0
+  // Until the AI answers there is nothing to count yet, so the bar just shows it is working.
+  const waitingForAI = status === 'generating' && total === null
   const heading =
     status === 'done'
       ? `Done. ${files.length} ${files.length === 1 ? 'file' : 'files'} written.`
@@ -105,14 +107,21 @@ function ResultCard({ planId }: { planId: string }) {
         aria-label="Code written"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(progress * 100)}
+        aria-valuenow={waitingForAI ? undefined : Math.round(progress * 100)}
         className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-200"
       >
-        <div
-          className="h-full rounded-full bg-brand transition-[width] duration-500 ease-out motion-reduce:transition-none"
-          style={{ width: `${progress * 100}%` }}
-        />
+        {waitingForAI ? (
+          <div className="h-full w-1/4 rounded-full bg-brand motion-safe:animate-[working_1.4s_ease-in-out_infinite]" />
+        ) : (
+          <div
+            className="h-full rounded-full bg-brand transition-[width] duration-500 ease-out motion-reduce:transition-none"
+            style={{ width: `${progress * 100}%` }}
+          />
+        )}
       </div>
+      {waitingForAI && (
+        <p className="mt-4 text-sm text-muted">The AI is writing your files. This can take up to a minute.</p>
+      )}
 
       {error && (
         <p role="alert" className="mt-4 text-sm text-red-600">

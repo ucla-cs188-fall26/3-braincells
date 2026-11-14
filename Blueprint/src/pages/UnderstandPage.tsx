@@ -39,6 +39,7 @@ const DEFAULT_EXPLANATION: Explanation = {
 
 // What a file is for, in plan words: "the task list", or the whole app for App.jsx.
 function filePurpose(payload: BuildPayload, file: GeneratedFile): string {
+  if (file.purpose) return file.purpose
   if (file.name === 'App.jsx') return 'the whole app, so your screens work together'
   const main = file.sources
     .filter((source) => source.kind === 'box')

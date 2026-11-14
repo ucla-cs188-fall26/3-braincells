@@ -2,11 +2,11 @@ import express from "express";
 import type { ErrorRequestHandler, Response } from "express";
 import cors from "cors";
 import "dotenv/config";
-import { AIError, callAIModel, reviewPlan } from "./service/ai.service.js";
+import { AIError, generateCode, reviewPlan } from "./service/ai.service.js";
+import { GenerateRequestSchema, prepareGenerate } from "./generate.js";
 import {
   PlanRequestSchema,
   REVIEW_SYSTEM_PROMPT,
-  buildGeneratePrompt,
   buildReviewPrompt,
   describeRequestError,
   normalizePlan,
@@ -38,13 +38,21 @@ function readPlan(body: unknown, res: Response): Plan | null {
   return normalizePlan(parsed.data);
 }
 
-// send the plan to the AI model and get code back
+// "Send plan to AI": the AI writes the app's files, then says which lines came from which box,
+// arrow and rule (the Understand step links the plan to the code with these)
 app.post("/api/generate", async (req, res) => {
-  const plan = readPlan(req.body, res);
-  if (!plan) return;
-
-  const result = await callAIModel(buildGeneratePrompt(plan));
-  res.json({ result });
+  const parsed = GenerateRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: describeRequestError(parsed.error) });
+    return;
+  }
+  const { ids, plan, writePrompt } = prepareGenerate(parsed.data);
+  const answer = await generateCode(plan, writePrompt, ids);
+  if (answer.files.length === 0) {
+    res.status(502).json({ error: "The AI didn't send back any files. Try again." });
+    return;
+  }
+  res.json(answer);
 });
 
 // ask the AI model to review the plan: issues and suggested boxes

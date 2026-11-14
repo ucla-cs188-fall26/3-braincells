@@ -1,5 +1,16 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
+import type { z } from "zod";
+import {
+  CodeMapSchema,
+  MAP_SYSTEM_PROMPT,
+  WRITE_SYSTEM_PROMPT,
+  WrittenCodeSchema,
+  attachLinks,
+  buildMapPrompt,
+  cleanWrittenFiles,
+  type IdMap,
+} from "../generate.js";
 import { ReviewSchema, type Review } from "../plan.js";
 
 const MODEL = "gpt-4o-mini";
@@ -42,7 +53,7 @@ function toAIError(err: unknown): AIError {
   return new AIError("The AI request failed.", 502);
 }
 
-// Sends a prompt and returns the model's reply as text (used for generating code).
+// Sends a prompt and returns the model's reply as plain text (used by the test-ai script).
 export async function callAIModel(prompt: string): Promise<string> {
   try {
     const response = await getClient().chat.completions.create({
@@ -55,25 +66,60 @@ export async function callAIModel(prompt: string): Promise<string> {
   }
 }
 
-// Asks the model to review a plan and returns its answer in the shape of ReviewSchema.
-export async function reviewPlan(system: string, prompt: string): Promise<Review> {
+type AskOptions = { timeoutMs?: number; maxTokens?: number };
+
+// Sends a system + user prompt and returns the answer parsed into the given schema.
+async function askForJson<T extends z.ZodTypeAny>(
+  schema: T,
+  name: string,
+  system: string,
+  prompt: string,
+  { timeoutMs, maxTokens }: AskOptions = {},
+): Promise<z.infer<T>> {
   try {
-    const response = await getClient().chat.completions.parse({
-      model: MODEL,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: prompt },
-      ],
-      response_format: zodResponseFormat(ReviewSchema, "plan_review"),
-    });
+    const response = await getClient().chat.completions.parse(
+      {
+        model: MODEL,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt },
+        ],
+        response_format: zodResponseFormat(schema, name),
+        ...(maxTokens ? { max_completion_tokens: maxTokens } : {}),
+      },
+      timeoutMs ? { timeout: timeoutMs } : {},
+    );
     const message = response.choices[0]?.message;
     if (!message?.parsed) throw unreadableAnswer(message?.refusal);
-    return message.parsed;
+    // The SDK's own inferred type is the same thing; TypeScript can't see that through the generic.
+    return message.parsed as z.infer<T>;
   } catch (err) {
     // A reply that was cut off or isn't valid JSON is not an API error; the answer is unusable.
     if (err instanceof AIError || err instanceof OpenAI.APIError) throw toAIError(err);
     throw unreadableAnswer(err);
   }
+}
+
+// Asks the model to review a plan and returns its answer in the shape of ReviewSchema.
+export function reviewPlan(system: string, prompt: string): Promise<Review> {
+  return askForJson(ReviewSchema, "plan_review", system, prompt);
+}
+
+// Writes the app, then asks the model which lines belong to which box, arrow and rule. Writing
+// several files takes longer than a review, so these calls get more time.
+export async function generateCode(plan: string, writePrompt: string, ids: IdMap) {
+  const written = cleanWrittenFiles(
+    await askForJson(WrittenCodeSchema, "written_code", WRITE_SYSTEM_PROMPT, writePrompt, {
+      timeoutMs: 90_000,
+      maxTokens: 10_000,
+    }),
+  );
+  if (written.length === 0) return { files: [] };
+  const map = await askForJson(CodeMapSchema, "code_map", MAP_SYSTEM_PROMPT, buildMapPrompt(plan, written), {
+    timeoutMs: 60_000,
+    maxTokens: 6_000,
+  });
+  return attachLinks(written, map, ids);
 }
 
 // The model's answer was a refusal, was cut off, or didn't match the schema. We never pass on partial results.

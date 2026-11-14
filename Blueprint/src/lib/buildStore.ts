@@ -14,7 +14,7 @@ export type BuildState = {
 }
 
 const IDLE: BuildState = { status: 'idle', files: [], total: null, key: null, error: null }
-const VERSION = 2 // 2: sources carry summary/debugHint and rules map to one line
+const VERSION = 3 // 3: code is written by the AI (builds from the old template mock are dropped)
 const storageKey = (planId: string) => `blueprint:plan-build:${planId}`
 
 // The plan as it would be sent right now, read from the autosave.
