@@ -2,6 +2,13 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import type { GeneratedFile } from '../lib/generateCode'
 
 export type LineHighlight = 'box' | 'block' | 'rule'
+// A small tag at the right end of a line naming what the block is, e.g. "Task storage".
+export type LineLabel = { text: string; tone: 'box' | 'rule' }
+
+const LABEL_STYLE: Record<LineLabel['tone'], string> = {
+  box: 'border-brand/30 bg-white text-brand',
+  rule: 'border-amber-300 bg-white text-amber-800',
+}
 
 const HIGHLIGHT_STYLE: Record<LineHighlight, string> = {
   box: 'bg-trace-box',
@@ -34,6 +41,8 @@ type CodeViewerProps = {
   activeFile: string
   onSelectFile: (name: string) => void
   highlights: Map<number, LineHighlight> // for the active file
+  labels: Map<number, LineLabel> // for the active file
+  markedFiles: Set<string> // tabs that get a dot: they hold code for the selection
   // Changing this scrolls that line into view (a new object each time, so the same line can repeat).
   scrollTarget: { line: number } | null
   selectedLine: number | null // gets a blue bar on its left edge
@@ -45,6 +54,8 @@ export default function CodeViewer({
   activeFile,
   onSelectFile,
   highlights,
+  labels,
+  markedFiles,
   scrollTarget,
   selectedLine,
   onLineClick,
@@ -86,18 +97,21 @@ export default function CodeViewer({
       <div role="tablist" aria-label="Files" className="flex shrink-0 gap-1 overflow-x-auto border-b border-gray-200 px-4">
         {files.map(({ name }) => {
           const active = name === file?.name
+          const marked = markedFiles.has(name)
           return (
             <button
               key={name}
               type="button"
               role="tab"
               aria-selected={active}
+              aria-description={marked ? 'Has code for your selection' : undefined}
               onClick={() => onSelectFile(name)}
-              className={`-mb-px border-b-2 px-3 py-3 font-mono text-sm whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand ${
+              className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-3 font-mono text-sm whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand ${
                 active ? 'border-ink text-ink' : 'border-transparent text-gray-400 hover:text-muted'
               }`}
             >
               {name}
+              {marked && <span aria-hidden="true" className="size-1.5 rounded-full bg-brand" />}
             </button>
           )
         })}
@@ -108,6 +122,7 @@ export default function CodeViewer({
           const number = index + 1
           const highlight = highlights.get(number)
           const selected = number === selectedLine
+          const label = labels.get(number)
           return (
             <div
               key={`${file.name}:${number}`}
@@ -115,7 +130,7 @@ export default function CodeViewer({
               role="button"
               tabIndex={number === tabLine ? 0 : -1}
               aria-pressed={selected}
-              aria-label={`Line ${number}: ${text.trim() || 'blank'}`}
+              aria-label={`Line ${number}${label ? ` (${label.text})` : ''}: ${text.trim() || 'blank'}`}
               onClick={() => onLineClick(number)}
               onFocus={() => setFocusLine(number)}
               onKeyDown={(event) => handleKeyDown(event, number)}
@@ -127,6 +142,15 @@ export default function CodeViewer({
                 {number}
               </span>
               <code className="pr-6 whitespace-pre text-ink">{text ? colorize(text) : ' '}</code>
+              {/* Sticks to the right edge, so it stays visible on long lines. */}
+              {label && (
+                <span
+                  aria-hidden="true"
+                  className={`sticky right-3 ml-auto max-w-[45%] shrink-0 self-center truncate rounded-md border px-2 font-sans text-xs leading-5 font-semibold motion-safe:animate-row-in ${LABEL_STYLE[label.tone]}`}
+                >
+                  {label.text}
+                </span>
+              )}
             </div>
           )
         })}

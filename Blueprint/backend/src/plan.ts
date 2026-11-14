@@ -138,13 +138,6 @@ Connections:
 ${links || "(none)"}${parkedText}`;
 }
 
-// The prompt for "Send plan to AI": generate code.
-export function buildGeneratePrompt(plan: Plan): string {
-  return `${describePlan(plan, false)}
-
-Generate code that implements this plan.`;
-}
-
 // Rules for the reviewer live in the system message, so text inside the plan can't override them.
 export const REVIEW_SYSTEM_PROMPT = `You review software plans that people sketch as boxes and arrows. Readers range from beginners and students to experienced developers.
 

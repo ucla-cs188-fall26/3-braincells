@@ -1,7 +1,8 @@
 import { isRecord, parseReview, type PlanReview } from './planCheck'
 import { DEFAULT_PLAN_ID, loadPlan, loadPlanName } from './planStorage'
 
-const UNEXPECTED = 'The AI sent back something unexpected. Try again.'
+export const UNEXPECTED_ANSWER = 'The AI sent back something unexpected. Try again.'
+const NO_SERVER = "Couldn't reach the server. Is the backend running?"
 
 // Builds what the backend needs from the autosaved plan. Suggested boxes the user hasn't kept yet
 // aren't part of the plan, so they are left out together with their arrows and rules.
@@ -20,30 +21,31 @@ function planRequestBody(planId: string) {
   }
 }
 
-// POSTs the plan to the backend and returns the JSON answer. Throws the backend's error message if it fails.
-async function postPlan(path: string, planId: string): Promise<unknown> {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(planRequestBody(planId)),
-  })
-
-  const body: unknown = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const message = isRecord(body) && typeof body.error === 'string' ? body.error : null
-    throw new Error(message ?? `Request failed (${response.status})`)
+// POSTs JSON to the backend and returns the JSON answer. Throws the backend's error message if it fails.
+export async function postJson(path: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch (err) {
+    if (signal?.aborted) throw err
+    throw new Error(NO_SERVER, { cause: err })
   }
-  return body
-}
 
-// Sends the autosaved plan to the backend, which asks the AI model to generate code for it.
-export async function sendPlanToAI(planId: string = DEFAULT_PLAN_ID): Promise<string> {
-  const body = await postPlan('/api/generate', planId)
-  if (!isRecord(body) || typeof body.result !== 'string') throw new Error(UNEXPECTED)
-  return body.result
+  const answer: unknown = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = isRecord(answer) && typeof answer.error === 'string' ? answer.error : null
+    // The dev server answers for a backend that isn't running, with a bare 5xx and no message.
+    throw new Error(message ?? (response.status >= 500 ? NO_SERVER : `Request failed (${response.status})`))
+  }
+  return answer
 }
 
 // Sends the autosaved plan to the backend, which asks the AI model to review it.
 export async function checkPlan(planId: string = DEFAULT_PLAN_ID): Promise<PlanReview> {
-  return parseReview(await postPlan('/api/check', planId))
+  return parseReview(await postJson('/api/check', planRequestBody(planId)))
 }

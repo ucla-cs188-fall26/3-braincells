@@ -28,7 +28,6 @@ type DiagramNodeData = {
   kept: boolean
   ruleCount: number
   selected: boolean
-  onSelect: (boxId: string) => void
 }
 type DiagramNode = Node<DiagramNodeData, 'diagram'>
 type DiagramEdge = Edge<{ label: string; highlighted: boolean }, 'diagram'>
@@ -39,14 +38,13 @@ const HANDLE_POSITIONS = [Position.Top, Position.Right, Position.Bottom, Positio
 const FIT_OPTIONS = { padding: 0.15 }
 
 // A box as it looks on the Plan canvas, but the only thing it does is get clicked.
-function DiagramBox({ id, data }: NodeProps<DiagramNode>) {
+function DiagramBox({ data }: NodeProps<DiagramNode>) {
   const style = data.later ? LATER_BOX_STYLE : data.kept ? KEPT_BOX_STYLE : BOX_STYLE
   return (
     <div className="relative w-48">
       <button
         type="button"
         aria-pressed={data.selected}
-        onClick={() => data.onSelect(id)}
         className={`${style} relative w-full cursor-pointer text-left transition-shadow duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
           data.later ? 'opacity-60' : ''
         } ${data.selected ? 'ring-2 ring-brand ring-offset-1' : 'hover:ring-2 hover:ring-brand/25'}`}
@@ -142,10 +140,9 @@ function Diagram({ plan, selectedBoxIds, highlightedArrowId, onSelectBox, onClea
             kept: !!node.data.kept,
             ruleCount: rulesForBox(plan?.rules ?? [], node.id).length,
             selected: selectedBoxIds.has(node.id),
-            onSelect: onSelectBox,
           },
         })),
-    [plan, selectedBoxIds, onSelectBox],
+    [plan, selectedBoxIds],
   )
   const edges = useMemo<DiagramEdge[]>(() => {
     const ids = new Set(nodes.map((node) => node.id))
@@ -201,6 +198,9 @@ function Diagram({ plan, selectedBoxIds, highlightedArrowId, onSelectBox, onClea
         zoomOnPinch={false}
         zoomOnDoubleClick={false}
         preventScrolling={false}
+        // Needed for clicks at all: React Flow turns off pointer events on nodes that can't be
+        // selected or dragged unless onNodeClick is set. Enter/Space on the box's button click too.
+        onNodeClick={(_, node) => onSelectBox(node.id)}
         onPaneClick={onClear}
       />
     </div>
