@@ -14,7 +14,7 @@ export type BuildState = {
 }
 
 const IDLE: BuildState = { status: 'idle', files: [], total: null, key: null, error: null }
-const VERSION = 1
+const VERSION = 2 // 2: sources carry summary/debugHint and rules map to one line
 const storageKey = (planId: string) => `blueprint:plan-build:${planId}`
 
 // The plan as it would be sent right now, read from the autosave.

@@ -17,6 +17,11 @@
   --color-ai: #b4421d;
   --color-ai-bg: #fdf3ee;
 
+  /* Understand step: a box's lines, the block a clicked line belongs to, and rule lines */
+  --color-trace-box: #eaf1fb;
+  --color-trace-block: #d3e2f6;
+  --color-trace-rule: #fdf3c7;
+
   /* A generated file row arriving on the Build step */
   --animate-row-in: row-in 150ms ease-out both;
   @keyframes row-in {

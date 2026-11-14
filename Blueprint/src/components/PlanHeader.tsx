@@ -16,6 +16,7 @@ const LOCKED_PILL = 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400
 // has the button that moves on to Build.
 export default function PlanHeader() {
   const onPlanStep = useMatch(ROUTES.newPlan) !== null
+  const onUnderstandStep = useMatch(ROUTES.understand) !== null
   const build = useBuild(DEFAULT_PLAN_ID)
 
   // Understand opens once the AI has written the code for the current plan.
@@ -63,6 +64,14 @@ export default function PlanHeader() {
       <div className="flex items-center gap-3 justify-self-end">
         <SavedStatus planId={DEFAULT_PLAN_ID} />
         <FileMenu planId={DEFAULT_PLAN_ID} />
+        {onUnderstandStep && (
+          <Link
+            to={ROUTES.newPlan}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold whitespace-nowrap text-ink no-underline transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+          >
+            Edit plan
+          </Link>
+        )}
         {onPlanStep && (
           <Link
             to={ROUTES.build}

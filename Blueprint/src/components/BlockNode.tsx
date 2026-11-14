@@ -12,6 +12,7 @@ import { CheckIcon } from '@heroicons/react/24/outline'
 import { issuesForBox, worstSeverity, type Severity } from '../lib/planCheck'
 import { rulesForBox } from '../lib/rules'
 import BlockToolbar from './BlockToolbar'
+import { BOX_STYLE, KEPT_BOX_STYLE, LATER_BOX_STYLE } from './boxStyles'
 import { IssuesContext } from './IssuesContext'
 import RuleCorner from './RuleCorner'
 import { RulesContext } from './RulesContext'
@@ -28,10 +29,6 @@ export type BlockNodeData = {
 
 export type BlockNodeType = Node<BlockNodeData, 'block'>
 
-const BOX_STYLE = 'flex flex-col rounded-xl border border-brand bg-blue-50 px-3 py-2'
-const LATER_BOX_STYLE = 'flex flex-col rounded-xl border-2 border-dotted border-gray-400 bg-white/40 px-3 py-2'
-// A box the AI added that the user kept: green with a check, so it stays clear where it came from.
-const KEPT_BOX_STYLE = 'flex flex-col rounded-xl border-2 border-green-700 bg-green-50 py-2 pr-8 pl-3'
 const SUGGESTED_BOX_STYLE = 'flex flex-col rounded-xl border-2 border-dashed border-ai bg-ai-bg px-3 py-2'
 const HALO_STYLE ='ring-4 ring-brand/20'
 const SUGGESTED_HALO_STYLE = 'ring-2 ring-offset-2 ring-ink'
