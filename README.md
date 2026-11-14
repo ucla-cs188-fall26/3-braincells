@@ -12,9 +12,26 @@ Students who vibe code want to be authors of their projects, but AI coding tools
 
 ## How it works
 
-1. **Plan.** Draw your app as boxes and arrows. Add rules like "Never send a reminder after 9pm." A panel shows exactly what the AI will read.
-2. **Build.** Send the plan to the AI and get code back.
-3. **Understand.** Click a box to see its lines of code, or click a line to see which box it belongs to.
+1. **Plan.** Draw your app as boxes and arrows, label the arrows, and add rules to boxes, like "A task needs a title." Use **Mark for later** on a box to leave it out of the first version (it turns dotted and faded). **Check with AI** reviews the plan and suggests missing boxes, which you can keep or remove.
+2. **Build.** A **Review** card shows exactly what will be sent to the AI: the boxes, arrows and rules in version 1, plus the boxes left out for later. **Send plan to AI** sends it to OpenAI, which writes the app's files. The files appear in a list once the AI is done, usually after 15 to 30 seconds.
+3. **Understand.** Click a box to jump to its code: its lines turn blue with a name tag, its rule lines turn yellow, and file tabs that also hold its code get a blue dot. Click any line of code to see which box, arrow or rule it belongs to, explained in your own words with a tip on where to start if something goes wrong.
+
+### How the code is linked to the plan
+
+Building makes two requests to OpenAI:
+
+1. **Write.** The AI gets the version-1 boxes, arrows and rules and writes the files. Boxes marked for later are listed so it knows to leave them out.
+2. **Map.** The AI gets the plan again, plus the code with a line number in front of every line, and says which lines belong to each box, arrow and rule, with a short plain-language explanation and debugging tip for each.
+
+The server checks every link from the second step and drops any that point at a file or line that doesn't exist. The Understand step is built entirely on these links. The AI writes different code each time, so file names and line numbers change between builds.
+
+### Where your work is saved
+
+Everything is saved in your browser's localStorage, not on the server: the plan, its name and the last finished build. That means:
+
+- Editing the plan (including marking a box for later) resets the Build step. Moving boxes around or renaming the plan doesn't.
+- **3 · Understand** stays locked until a build finishes for the current plan.
+- To start over, clear the site's storage in your browser's dev tools.
 
 ## Tech Stack
 
@@ -33,8 +50,9 @@ Students who vibe code want to be authors of their projects, but AI coding tools
 
 - [Node.js](https://nodejs.org) + [TypeScript](https://www.typescriptlang.org)
 - [Express 5](https://expressjs.com): REST API server
-- [OpenAI Node SDK](https://github.com/openai/openai-node): calls `gpt-4o-mini` to generate code from a plan
+- [OpenAI Node SDK](https://github.com/openai/openai-node): calls `gpt-4o-mini` to review a plan, write its code and link the code back to the plan
 - [cors](https://github.com/expressjs/cors): lets the Vite frontend call the API
+- [zod](https://zod.dev): checks incoming plans and gives OpenAI the exact shape its answers must follow
 - [dotenv](https://github.com/motdotla/dotenv): loads API keys and config from `.env`
 - [tsx](https://tsx.is): runs TypeScript directly with watch mode in development
 
@@ -46,7 +64,7 @@ The frontend lives in the [`Blueprint/`](./Blueprint) folder and the backend in 
 
 - [Node.js](https://nodejs.org) (v20.19+ recommended) and npm
 
-- An [OpenAI API key](https://platform.openai.com/api-keys) (for the backend)
+- An [OpenAI API key](https://platform.openai.com/api-keys) (for the backend). Both **Check with AI** and **Send plan to AI** use it, so the backend must be running for them to work. Each build makes two requests on the key.
 
 ### Run the frontend
 
@@ -84,9 +102,13 @@ The API runs at http://localhost:3001. Check it with http://localhost:3001/api/h
 
 ### API endpoints
 
-| Method | Path          | Description                    |
-| ------ | ------------- | ------------------------------ |
-| GET    | `/api/health` | Confirms the server is running |
+| Method | Path            | Description                                                                         |
+| ------ | --------------- | ----------------------------------------------------------------------------------- |
+| GET    | `/api/health`   | Confirms the server is running                                                      |
+| POST   | `/api/check`    | Reviews a plan and suggests boxes (used by **Check with AI**)                       |
+| POST   | `/api/generate` | Writes the app's code and links its lines to the plan (used by **Send plan to AI**) |
+
+During development the frontend calls these with plain paths like `/api/generate`, and the Vite dev server forwards them to http://localhost:3001.
 
 ## Available Scripts
 
@@ -116,16 +138,26 @@ Run these from the `Blueprint/backend/` folder:
 
 ```
 3-braincells/
-└── Blueprint/                # React + TypeScript + Vite app
-    ├── src/                  # Frontend source
-    ├── public/               # Static assets
-    ├── index.html            # App entry point
-    └── backend/              # Express + TypeScript API
+└── Blueprint/                    # React + TypeScript + Vite app
+    ├── src/
+    │   ├── pages/                # Home, Plan, Build and Understand pages
+    │   ├── components/           # Canvas, boxes, arrows, top bar, code viewer, diagram
+    │   └── lib/
+    │       ├── planStorage.ts    # Saving and loading the plan (localStorage)
+    │       ├── buildPayload.ts   # Turns the plan into what is sent to the AI
+    │       ├── generateCode.ts   # Calls /api/generate and reads the files it returns
+    │       ├── buildStore.ts     # Build progress, shared by the top bar and Build page
+    │       └── trace.ts          # Finds a box's code, and the box behind a line
+    ├── public/                   # Static assets
+    ├── index.html                # App entry point
+    └── backend/                  # Express + TypeScript API
         └── src/
-            ├── server.ts     # Express app and routes
-            ├── test-ai.ts    # Script to test the OpenAI connection
+            ├── server.ts         # Express app and routes
+            ├── plan.ts           # Plan review: prompt, answer shape, cleanup
+            ├── generate.ts       # Code generation: prompts, answer shapes, link checks
+            ├── test-ai.ts        # Script to test the OpenAI connection
             └── service/
-                └── ai.service.ts  # OpenAI calls
+                └── ai.service.ts # OpenAI calls
 ```
 
 ## Status
