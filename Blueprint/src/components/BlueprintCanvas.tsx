@@ -108,6 +108,12 @@ function Canvas({ planId }: { planId: string }) {
     const timer = setTimeout(save, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [save]);
+  // Leaving the Plan step (e.g. "Review and build") saves right away, so the last edit isn't lost.
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
+  useEffect(() => () => saveRef.current(), []);
 
   const handleMoveEnd = (_event: unknown, viewport: Viewport) => {
     viewportRef.current = viewport;

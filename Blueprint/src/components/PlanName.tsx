@@ -1,4 +1,5 @@
 import { useState, type FocusEvent, type KeyboardEvent } from 'react'
+import { PencilIcon } from '@heroicons/react/16/solid'
 import { DEFAULT_PLAN_NAME, loadPlanName, savePlanName } from '../lib/planStorage'
 
 const MAX_LENGTH = 60
@@ -33,8 +34,7 @@ export default function PlanName({ planId }: { planId: string }) {
   }
 
   return (
-    <div className="flex items-center gap-1 text-sm text-muted">
-      <span aria-hidden="true">/</span>
+    <div className="flex min-w-0 items-center text-sm text-ink">
       {editing ? (
         // The hidden span holds the same text as the input, so the box grows as you type.
         <div className="inline-grid rounded-md border border-brand bg-white px-2 py-0.5 text-ink">
@@ -59,9 +59,10 @@ export default function PlanName({ planId }: { planId: string }) {
           type="button"
           onClick={startEditing}
           title="Rename plan"
-          className="max-w-64 cursor-text truncate rounded-md border border-transparent px-2 py-0.5 hover:border-gray-300 focus-visible:outline-2 focus-visible:outline-brand"
+          className="group flex max-w-64 min-w-0 items-center gap-1.5 rounded-md border border-transparent px-2 py-0.5 hover:border-gray-300 focus-visible:outline-2 focus-visible:outline-brand"
         >
-          {name}
+          <span className="truncate">{name}</span>
+          <PencilIcon aria-hidden="true" className="size-3.5 shrink-0 text-gray-400 group-hover:text-muted" />
         </button>
       )}
     </div>

@@ -16,6 +16,15 @@
   /* Boxes and arrows the AI added and the user hasn't kept yet */
   --color-ai: #b4421d;
   --color-ai-bg: #fdf3ee;
+
+  /* A generated file row arriving on the Build step */
+  --animate-row-in: row-in 150ms ease-out both;
+  @keyframes row-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
 }
 
 @layer base {
