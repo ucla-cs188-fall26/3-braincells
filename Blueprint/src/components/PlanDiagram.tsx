@@ -31,9 +31,10 @@ type DiagramNodeData = {
   onSelect: (boxId: string) => void
 }
 type DiagramNode = Node<DiagramNodeData, 'diagram'>
-type DiagramEdge = Edge<{ label: string }, 'diagram'>
+type DiagramEdge = Edge<{ label: string; highlighted: boolean }, 'diagram'>
 
 const EDGE_COLOR = 'var(--color-edge)'
+const HIGHLIGHTED_EDGE_COLOR = 'var(--color-ink)'
 const HANDLE_POSITIONS = [Position.Top, Position.Right, Position.Bottom, Position.Left]
 const FIT_OPTIONS = { padding: 0.15 }
 
@@ -96,7 +97,9 @@ function DiagramArrow({ data, sourceX, sourceY, targetX, targetY, sourcePosition
       {data?.label && (
         <EdgeLabelRenderer>
           <span
-            className={`absolute rounded-md bg-white px-2 py-0.5 text-sm text-ink ${placement}`}
+            className={`absolute rounded-md bg-white px-2 py-0.5 text-sm text-ink transition-shadow duration-150 ${placement} ${
+              data.highlighted ? 'font-semibold ring-2 ring-ink' : ''
+            }`}
             style={{ transform: `translate(${labelX}px, ${labelY}px)` }}
           >
             {data.label}
@@ -113,11 +116,12 @@ const edgeTypes = { diagram: DiagramArrow }
 type PlanDiagramProps = {
   plan: PlanState | null
   selectedBoxIds: Set<string>
+  highlightedArrowId: string | null // drawn darker and thicker
   onSelectBox: (boxId: string) => void
   onClear: () => void
 }
 
-function Diagram({ plan, selectedBoxIds, onSelectBox, onClear }: PlanDiagramProps) {
+function Diagram({ plan, selectedBoxIds, highlightedArrowId, onSelectBox, onClear }: PlanDiagramProps) {
   const { fitView } = useReactFlow()
   const frameRef = useRef<HTMLDivElement>(null)
 
@@ -147,18 +151,24 @@ function Diagram({ plan, selectedBoxIds, onSelectBox, onClear }: PlanDiagramProp
     const ids = new Set(nodes.map((node) => node.id))
     return (plan?.edges ?? [])
       .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
-      .map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        sourceHandle: edge.sourceHandle,
-        targetHandle: edge.targetHandle,
-        type: 'diagram',
-        data: { label: edge.data?.label ?? '' },
-        markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLOR },
-        style: { strokeWidth: 2, stroke: EDGE_COLOR },
-      }))
-  }, [plan, nodes])
+      .map((edge) => {
+        const highlighted = edge.id === highlightedArrowId
+        const color = highlighted ? HIGHLIGHTED_EDGE_COLOR : EDGE_COLOR
+        return {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+          type: 'diagram',
+          // Drawn last, so it sits on top of any arrow it crosses.
+          zIndex: highlighted ? 1 : 0,
+          data: { label: edge.data?.label ?? '', highlighted },
+          markerEnd: { type: MarkerType.ArrowClosed, color },
+          style: { strokeWidth: highlighted ? 3.5 : 2, stroke: color, transition: 'stroke 150ms, stroke-width 150ms' },
+        }
+      })
+  }, [plan, nodes, highlightedArrowId])
 
   // Keep the whole plan in view when the card changes size.
   useEffect(() => {

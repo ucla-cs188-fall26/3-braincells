@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { GeneratedFile } from '../lib/generateCode'
 
 export type LineHighlight = 'box' | 'block' | 'rule'
@@ -36,7 +36,8 @@ type CodeViewerProps = {
   highlights: Map<number, LineHighlight> // for the active file
   // Changing this scrolls that line into view (a new object each time, so the same line can repeat).
   scrollTarget: { line: number } | null
-  onLineClick?: (line: number) => void
+  selectedLine: number | null // gets a blue bar on its left edge
+  onLineClick: (line: number) => void
 }
 
 export default function CodeViewer({
@@ -45,11 +46,31 @@ export default function CodeViewer({
   onSelectFile,
   highlights,
   scrollTarget,
+  selectedLine,
   onLineClick,
 }: CodeViewerProps) {
   const file = files.find((f) => f.name === activeFile) ?? files[0]
   const lines = file ? file.code.replace(/\n$/, '').split('\n') : []
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Only one line is a Tab stop; the arrow keys move between lines and Enter picks one.
+  const [focusLine, setFocusLine] = useState(1)
+  const tabLine = Math.min(selectedLine ?? focusLine, Math.max(lines.length, 1))
+
+  const focusRow = (line: number) => {
+    const next = Math.min(Math.max(line, 1), lines.length)
+    setFocusLine(next)
+    scrollRef.current?.querySelector<HTMLElement>(`[data-line="${next}"]`)?.focus()
+  }
+  const handleKeyDown = (event: KeyboardEvent, line: number) => {
+    const moves: Record<string, number> = { ArrowDown: line + 1, ArrowUp: line - 1, Home: 1, End: lines.length }
+    if (event.key in moves) {
+      event.preventDefault()
+      focusRow(moves[event.key])
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onLineClick(line)
+    }
+  }
 
   useEffect(() => {
     const container = scrollRef.current
@@ -86,14 +107,21 @@ export default function CodeViewer({
         {lines.map((text, index) => {
           const number = index + 1
           const highlight = highlights.get(number)
+          const selected = number === selectedLine
           return (
             <div
               key={`${file.name}:${number}`}
               data-line={number}
-              onClick={onLineClick ? () => onLineClick(number) : undefined}
-              className={`flex cursor-pointer transition-colors duration-150 ${
+              role="button"
+              tabIndex={number === tabLine ? 0 : -1}
+              aria-pressed={selected}
+              aria-label={`Line ${number}: ${text.trim() || 'blank'}`}
+              onClick={() => onLineClick(number)}
+              onFocus={() => setFocusLine(number)}
+              onKeyDown={(event) => handleKeyDown(event, number)}
+              className={`flex cursor-pointer transition-[background-color,box-shadow] duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand ${
                 highlight ? HIGHLIGHT_STYLE[highlight] : 'hover:bg-gray-50'
-              }`}
+              } ${selected ? 'shadow-[inset_3px_0_0_var(--color-brand)]' : ''}`}
             >
               <span aria-hidden="true" className="w-12 shrink-0 pr-4 text-right text-gray-300 select-none">
                 {number}
